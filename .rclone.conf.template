@@ -7,7 +7,7 @@ scope = drive.file
 
 [gdrive_encrypted]
 type = crypt
-remote = gdrive:encrypted
+remote = gdrive:secure_vault
 filename_encryption = off
 directory_name_encryption = false
 password = YOUR_ENCRYPTION_PASSWORD
