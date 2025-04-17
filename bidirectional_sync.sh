@@ -8,7 +8,6 @@ LOCAL_DIR="$1"
 REMOTE_DIR="gdrive_encrypted:"
 LOG_FILE="$HOME/.rclone/bidirectional_sync.log"
 EXCLUDE_RESOURCE_FORKS=false
-SYNC_INTERVAL=300  # 5 minutes in seconds
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -16,10 +15,6 @@ while [[ $# -gt 0 ]]; do
         --exclude-resource-forks)
             EXCLUDE_RESOURCE_FORKS=true
             shift
-            ;;
-        --interval)
-            SYNC_INTERVAL="$2"
-            shift 2
             ;;
         *)
             LOCAL_DIR="$1"
@@ -31,17 +26,15 @@ done
 # Check if local directory is provided
 if [ -z "$LOCAL_DIR" ]; then
     echo "Error: No local directory specified"
-    echo "Usage: $0 [--exclude-resource-forks] [--interval SECONDS] <local_directory>"
+    echo "Usage: $0 [--exclude-resource-forks] <local_directory>"
     echo "Example: $0 ~/Documents"
     echo "Example: $0 --exclude-resource-forks ~/Documents"
-    echo "Example: $0 --interval 600 ~/Documents"
     echo ""
-    echo "This will set up bidirectional sync between your local directory and Google Drive"
+    echo "This will perform a bidirectional sync between your local directory and Google Drive"
     echo "while preserving the file structure and names. Files will be encrypted in the cloud."
     echo ""
     echo "Options:"
     echo "  --exclude-resource-forks  Exclude macOS resource fork files (._*)"
-    echo "  --interval SECONDS        Set the sync interval in seconds (default: 300)"
     exit 1
 fi
 
@@ -101,13 +94,11 @@ fi
 # Start bidirectional sync
 log_message "Starting bidirectional sync between $LOCAL_DIR and $REMOTE_DIR"
 log_message "Files will be encrypted in the cloud but file names and structure will be preserved"
-log_message "Sync interval: $SYNC_INTERVAL seconds"
 
 echo ""
 echo "Starting bidirectional sync process..."
-echo "This will keep your local directory and Google Drive in sync in both directions."
+echo "This will sync your local directory and Google Drive in both directions."
 echo "Files will be encrypted in the cloud but file names and structure will be preserved."
-echo "Press Ctrl+C to stop the sync process."
 echo "----------------------------------------"
 
 # Run rclonesync with the specified options
@@ -125,6 +116,6 @@ eval "rclonesync \"$LOCAL_DIR\" \"$REMOTE_DIR\" \
     --rclone-progress \
     --rclone-stats-one-line \
     --rclone-stats 5s \
-    --sync-interval $SYNC_INTERVAL \
     --log-level INFO \
-    --log-file $LOG_FILE" 
+    --log-file $LOG_FILE \
+    --one-time" 

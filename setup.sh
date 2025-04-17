@@ -68,6 +68,10 @@ install_macos() {
     # Install rclonesync
     print_message "Installing rclonesync..."
     pip3 install rclonesync
+    
+    # Install watchdog
+    print_message "Installing watchdog..."
+    pip3 install watchdog
 }
 
 # Function to install dependencies on Linux
@@ -96,6 +100,10 @@ install_linux() {
     # Install rclonesync
     print_message "Installing rclonesync..."
     pip3 install rclonesync
+    
+    # Install watchdog
+    print_message "Installing watchdog..."
+    pip3 install watchdog
 }
 
 # Function to install dependencies on Windows
@@ -123,6 +131,10 @@ install_windows() {
     # Install rclonesync
     print_message "Installing rclonesync..."
     pip install rclonesync
+    
+    # Install watchdog
+    print_message "Installing watchdog..."
+    pip install watchdog
 }
 
 # Main installation process
@@ -149,7 +161,7 @@ main() {
     
     # Make scripts executable
     print_message "Making scripts executable..."
-    chmod +x sync.sh bidirectional_sync.sh setup_rclone.sh
+    chmod +x sync.sh bidirectional_sync.sh setup_rclone.sh monitor_and_sync.sh monitor_vault.py
     
     # Create necessary directories
     print_message "Creating necessary directories..."
@@ -160,6 +172,7 @@ main() {
     echo "1. Run './setup_rclone.sh' to configure rclone with your Google Drive"
     echo "2. Use './sync.sh' for one-way sync"
     echo "3. Use './bidirectional_sync.sh' for bidirectional sync"
+    echo "4. Use './monitor_and_sync.sh' to monitor a folder and sync on changes"
 }
 
 # Run main function

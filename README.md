@@ -8,7 +8,7 @@ A secure file synchronization tool that encrypts files before uploading them to 
 - 📁 **Structure Preservation**: Maintains original file structure and names
 - 🔄 **Sync Options**: 
   - One-way sync (local to cloud)
-  - Bidirectional sync (continuous two-way synchronization)
+  - Bidirectional sync (one-time two-way synchronization)
 - 🚫 **System File Exclusion**: Automatically excludes system files (e.g., .DS_Store)
 - 📊 **Progress Tracking**: Real-time progress information during sync
 - 🔧 **Cross-Platform**: Supports macOS, Linux, and Windows
@@ -61,14 +61,13 @@ Options:
 
 ### Bidirectional Sync
 
-To keep a local directory and Google Drive in sync:
+To perform a one-time bidirectional sync between your local directory and Google Drive:
 ```bash
 ./bidirectional_sync.sh /path/to/your/folder
 ```
 
 Options:
 - `--exclude-resource-forks`: Exclude macOS resource fork files (._*)
-- `--interval SECONDS`: Set the sync interval in seconds (default: 300)
 
 ## File Exclusions
 
