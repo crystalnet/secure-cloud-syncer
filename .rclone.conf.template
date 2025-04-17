@@ -8,8 +8,8 @@ scope = drive.file
 [gdrive_encrypted]
 type = crypt
 remote = gdrive:encrypted
-filename_encryption = standard
-directory_name_encryption = true
+filename_encryption = off
+directory_name_encryption = false
 password = YOUR_ENCRYPTION_PASSWORD
 password2 = YOUR_SALT_PASSWORD
 
