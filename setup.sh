@@ -71,7 +71,7 @@ install_macos() {
         brew install rclone
     else
         # Check rclone version for bisync support
-        RCLONE_VERSION=$(rclone version | grep -oP 'rclone v\K[0-9]+\.[0-9]+\.[0-9]+')
+        RCLONE_VERSION=$(rclone version | grep "rclone v" | sed -E 's/.*rclone v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
         if [[ "$(echo "$RCLONE_VERSION 1.58.0" | awk '{print ($1 < $2)}')" -eq 1 ]]; then
             print_warning "Your rclone version ($RCLONE_VERSION) is older than 1.58.0 which is required for bisync."
             print_message "Updating rclone..."
@@ -126,7 +126,7 @@ install_linux() {
     fi
     
     # Check rclone version for bisync support
-    RCLONE_VERSION=$(rclone version | grep -oP 'rclone v\K[0-9]+\.[0-9]+\.[0-9]+')
+    RCLONE_VERSION=$(rclone version | grep "rclone v" | sed -E 's/.*rclone v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
     if [[ "$(echo "$RCLONE_VERSION 1.58.0" | awk '{print ($1 < $2)}')" -eq 1 ]]; then
         print_warning "Your rclone version ($RCLONE_VERSION) is older than 1.58.0 which is required for bisync."
         print_message "Please update rclone to version 1.58.0 or newer."
@@ -160,7 +160,7 @@ install_windows() {
         choco install rclone -y
     else
         # Check rclone version for bisync support
-        RCLONE_VERSION=$(rclone version | grep -oP 'rclone v\K[0-9]+\.[0-9]+\.[0-9]+')
+        RCLONE_VERSION=$(rclone version | grep "rclone v" | sed -E 's/.*rclone v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
         if [[ "$(echo "$RCLONE_VERSION 1.58.0" | awk '{print ($1 < $2)}')" -eq 1 ]]; then
             print_warning "Your rclone version ($RCLONE_VERSION) is older than 1.58.0 which is required for bisync."
             print_message "Updating rclone..."
@@ -196,7 +196,7 @@ setup_rclone() {
     fi
     
     # Check rclone version for bisync support
-    RCLONE_VERSION=$(rclone version | grep -oP 'rclone v\K[0-9]+\.[0-9]+\.[0-9]+')
+    RCLONE_VERSION=$(rclone version | grep "rclone v" | sed -E 's/.*rclone v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
     if [[ "$(echo "$RCLONE_VERSION 1.58.0" | awk '{print ($1 < $2)}')" -eq 1 ]]; then
         print_error "Your rclone version ($RCLONE_VERSION) is older than 1.58.0 which is required for bisync."
         print_message "Please update rclone to version 1.58.0 or newer."
