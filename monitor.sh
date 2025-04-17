@@ -1,15 +1,5 @@
 #!/bin/bash
 
-# DEPRECATED: This script is deprecated and will be removed in a future version.
-# Please use the new monitor.sh script instead:
-#     ./monitor.sh [--exclude-resource-forks] [--debounce SECONDS] <vault_directory>
-#
-# The new implementation provides improved features:
-# - Queue-based sync management to handle multiple overlapping syncs
-# - Thread-safe implementation
-# - Better error handling and logging
-# - More robust debouncing
-
 # Exit on error
 set -e
 
@@ -128,5 +118,5 @@ echo "when changes are detected. Files will be encrypted in the cloud."
 echo "Press Ctrl+C to stop the monitoring process."
 echo "----------------------------------------"
 
-# Run the Python script with the necessary arguments
-python3 "$(dirname "$0")/monitor_vault.py" "$VAULT_DIR" "$REMOTE_DIR" "$EXCLUDE_PATTERNS" "$DEBOUNCE_TIME" "$LOG_FILE" 
+# Run the Python module with the necessary arguments
+python3 -m secure_cloud_syncer.sync.monitor "$VAULT_DIR" "$REMOTE_DIR" "$EXCLUDE_PATTERNS" "$DEBOUNCE_TIME" "$LOG_FILE" 

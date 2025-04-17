@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+"""
+DEPRECATED: This script is deprecated and will be removed in a future version.
+Please use the secure_cloud_syncer package instead:
+    python3 -m secure_cloud_syncer.sync.monitor <vault_dir> <remote_dir> <exclude_patterns> <debounce_time> <log_file>
+    
+The new implementation provides improved features:
+- Queue-based sync management to handle multiple overlapping syncs
+- Thread-safe implementation
+- Better error handling and logging
+- More robust debouncing
+"""
+
 import time
 import os
 import sys

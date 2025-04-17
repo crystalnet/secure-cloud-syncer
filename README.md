@@ -1,25 +1,15 @@
 # Secure Cloud Syncer
 
-A secure file synchronization tool that encrypts files before uploading them to Google Drive while preserving the original file structure and names. This tool provides both one-way and bidirectional synchronization options.
+A tool for securely syncing files with Google Drive using encryption.
 
 ## Features
 
-- 🔒 **Secure Encryption**: Files are encrypted before being uploaded to Google Drive
-- 📁 **Structure Preservation**: Maintains original file structure and names
-- 🔄 **Sync Options**: 
-  - One-way sync (local to cloud)
-  - Bidirectional sync (one-time two-way synchronization)
-- 🚫 **System File Exclusion**: Automatically excludes system files (e.g., .DS_Store)
-- 📊 **Progress Tracking**: Real-time progress information during sync
-- 🔧 **Cross-Platform**: Supports macOS, Linux, and Windows
-- ⚡ **Performance**: Optimized transfer settings for better sync speed
-
-## Prerequisites
-
-- Python 3.x
-- rclone
-- rclonesync (for bidirectional sync)
-- Google Drive account
+- **One-way Sync**: Sync files from a local directory to an encrypted Google Drive folder
+- **Bidirectional Sync**: Sync files between a local directory and an encrypted Google Drive folder
+- **File Monitoring**: Monitor a directory for changes and automatically trigger syncs
+- **Cross-Platform**: Works on macOS, Linux, and Windows
+- **Encryption**: All files are encrypted before being uploaded to Google Drive
+- **System File Exclusion**: Automatically excludes system files like `.DS_Store`
 
 ## Installation
 
@@ -33,96 +23,94 @@ A secure file synchronization tool that encrypts files before uploading them to 
    ```bash
    ./setup.sh
    ```
-   This will:
-   - Install required dependencies based on your OS
-   - Make all scripts executable
-   - Create necessary directories
 
-3. Configure rclone with your Google Drive:
-   ```bash
-   ./setup_rclone.sh
-   ```
-   Follow the prompts to:
-   - Set up Google Drive access
-   - Configure encryption settings
-   - Create the encrypted remote
+   This will:
+   - Install required dependencies (rclone, rclonesync, Python packages)
+   - Set up rclone with Google Drive
+   - Configure encryption
 
 ## Usage
 
-### One-Way Sync (Local to Cloud)
+### One-way Sync
 
-To sync a local directory to Google Drive:
+To sync files from a local directory to Google Drive:
+
 ```bash
-./sync.sh /path/to/your/folder
+./sync.sh [--exclude-resource-forks] <local_directory>
 ```
 
-Options:
-- `--exclude-resource-forks`: Exclude macOS resource fork files (._*)
+Example:
+```bash
+./sync.sh ~/Documents
+```
 
 ### Bidirectional Sync
 
-To perform a one-time bidirectional sync between your local directory and Google Drive:
+To sync files between a local directory and Google Drive in both directions:
+
 ```bash
-./bidirectional_sync.sh /path/to/your/folder
+./bidirectional_sync.sh [--exclude-resource-forks] <local_directory>
 ```
 
-Options:
+Example:
+```bash
+./bidirectional_sync.sh ~/secure_vault
+```
+
+### File Monitoring
+
+To monitor a directory for changes and automatically trigger bidirectional syncs:
+
+```bash
+./monitor.sh [--exclude-resource-forks] [--debounce SECONDS] <vault_directory>
+```
+
+Example:
+```bash
+./monitor.sh ~/secure_vault
+```
+
+Example with options:
+```bash
+./monitor.sh --exclude-resource-forks --debounce 10 ~/secure_vault
+```
+
+## Python Package
+
+The project also provides a Python package for more advanced usage:
+
+```python
+from secure_cloud_syncer.sync import one_way, bidirectional, monitor
+
+# One-way sync
+one_way.sync_directory("/path/to/local/dir")
+
+# Bidirectional sync
+bidirectional.sync_bidirectional("/path/to/local/dir")
+
+# Start monitoring
+monitor.start_monitoring("/path/to/vault/dir", "gdrive_encrypted:", exclude_patterns, 5.0, "/path/to/log/file")
+```
+
+## Options
+
 - `--exclude-resource-forks`: Exclude macOS resource fork files (._*)
+- `--debounce SECONDS`: Set the debounce time in seconds (default: 5)
 
-## File Exclusions
+## Logs
 
-The following files are automatically excluded from sync:
-- `.DS_Store` files and directories
-- `.Trash` directories
-- `.localized` files
-- `.Spotlight-V100` directories
-- `.fseventsd` directories
-- `.TemporaryItems` directories
-- `.VolumeIcon.icns` files
-- `.DocumentRevisions-V100` directories
-- `.com.apple.timemachine.donotpresent` files
-- `.AppleDouble` directories
-- `.LSOverride` directories
-- `Icon?` files
-- Resource fork files (._*) - optional
+Logs are stored in:
+- `~/.rclone/sync.log` for one-way syncs
+- `~/.rclone/bidirectional_sync.log` for bidirectional syncs
+- `~/.rclone/monitor_sync.log` for monitoring
 
-## Configuration
+## Requirements
 
-### rclone Configuration
-
-The rclone configuration is stored in `~/.rclone/rclone.conf`. A template is provided in `.rclone.conf.template`. The configuration includes:
-- Google Drive remote setup
-- Encryption settings
-- Transfer optimizations
-
-### Log Files
-
-- One-way sync logs: `~/.rclone/sync.log`
-- Bidirectional sync logs: `~/.rclone/bidirectional_sync.log`
-
-## Security
-
-- Files are encrypted using rclone's encryption feature
-- File names and structure remain unencrypted for easy navigation
-- Encryption password is stored securely and never committed to version control
-- System files are automatically excluded from sync
-
-## Troubleshooting
-
-1. If sync seems stuck:
-   - Check the log files in `~/.rclone/`
-   - Ensure you have proper permissions for the local directory
-   - Verify your internet connection
-
-2. If files aren't syncing:
-   - Check if the files are in the excluded patterns
-   - Verify rclone configuration is correct
-   - Ensure Google Drive access is properly configured
-
-## Contributing
-
-Feel free to submit issues and enhancement requests!
+- Python 3.6+
+- rclone
+- rclonesync
+- watchdog
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
+MIT 
