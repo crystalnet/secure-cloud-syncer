@@ -9,6 +9,8 @@ import os
 import sys
 import logging
 import subprocess
+import threading
+import queue
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -24,12 +26,76 @@ logging.basicConfig(
 )
 logger = logging.getLogger("secure_cloud_syncer.monitor")
 
+class SyncQueue:
+    """
+    Queue for managing sync requests.
+    Ensures that syncs are processed sequentially and no changes are lost.
+    """
+    
+    def __init__(self):
+        """
+        Initialize the sync queue.
+        """
+        self.queue = queue.Queue()
+        self.processing = False
+        self.lock = threading.Lock()
+        self.worker_thread = None
+        logger.info("Initialized sync queue")
+    
+    def add_request(self, sync_func, *args, **kwargs):
+        """
+        Add a sync request to the queue.
+        
+        Args:
+            sync_func: The function to call for syncing
+            *args: Positional arguments for the sync function
+            **kwargs: Keyword arguments for the sync function
+        """
+        self.queue.put((sync_func, args, kwargs))
+        logger.debug(f"Added sync request to queue. Queue size: {self.queue.qsize()}")
+        
+        # Start the worker thread if it's not running
+        with self.lock:
+            if not self.processing and (self.worker_thread is None or not self.worker_thread.is_alive()):
+                self.worker_thread = threading.Thread(target=self._process_queue)
+                self.worker_thread.daemon = True
+                self.worker_thread.start()
+                logger.debug("Started sync worker thread")
+    
+    def _process_queue(self):
+        """
+        Process sync requests from the queue.
+        """
+        with self.lock:
+            self.processing = True
+        
+        logger.info("Sync worker thread started")
+        
+        try:
+            while not self.queue.empty():
+                # Get the next sync request
+                sync_func, args, kwargs = self.queue.get()
+                logger.info(f"Processing sync request. Queue size: {self.queue.qsize()}")
+                
+                try:
+                    # Execute the sync function
+                    sync_func(*args, **kwargs)
+                except Exception as e:
+                    logger.error(f"Error during sync: {e}")
+                finally:
+                    # Mark the task as done
+                    self.queue.task_done()
+        finally:
+            with self.lock:
+                self.processing = False
+            logger.info("Sync worker thread finished")
+
 class ChangeHandler(FileSystemEventHandler):
     """
     Handler for file system events that triggers bidirectional sync when changes are detected.
     """
     
-    def __init__(self, vault_dir, remote_dir, exclude_patterns, debounce_time, log_file):
+    def __init__(self, vault_dir, remote_dir, exclude_patterns, debounce_time, log_file, sync_queue):
         """
         Initialize the change handler.
         
@@ -39,14 +105,15 @@ class ChangeHandler(FileSystemEventHandler):
             exclude_patterns (str): Rclone exclude patterns
             debounce_time (float): Time in seconds to wait after a change before triggering sync
             log_file (str): Path to the log file
+            sync_queue (SyncQueue): Queue for managing sync requests
         """
         self.vault_dir = vault_dir
         self.remote_dir = remote_dir
         self.exclude_patterns = exclude_patterns
         self.debounce_time = debounce_time
         self.log_file = log_file
-        self.last_sync = 0
-        self.sync_in_progress = False
+        self.sync_queue = sync_queue
+        self.last_change_time = 0
         logger.info(f"Initialized change handler for {vault_dir}")
 
     def on_any_event(self, event):
@@ -65,22 +132,31 @@ class ChangeHandler(FileSystemEventHandler):
             
         current_time = time.time()
         
-        # Debounce: only sync if enough time has passed since the last sync
-        if current_time - self.last_sync < self.debounce_time:
+        # Debounce: only queue a sync if enough time has passed since the last change
+        if current_time - self.last_change_time < self.debounce_time:
             logger.debug(f"Ignoring change due to debounce: {event.src_path}")
             return
             
-        # Don't start a new sync if one is already in progress
-        if self.sync_in_progress:
-            logger.debug(f"Ignoring change due to sync in progress: {event.src_path}")
-            return
-            
-        self.sync_in_progress = True
-        self.last_sync = current_time
+        self.last_change_time = current_time
         
         # Log the change
         logger.info(f"Change detected: {event.src_path}")
-        logger.info("Starting bidirectional sync...")
+        logger.info("Queueing bidirectional sync...")
+        
+        # Add the sync request to the queue
+        self.sync_queue.add_request(
+            self._perform_sync,
+            event.src_path
+        )
+    
+    def _perform_sync(self, changed_file):
+        """
+        Perform a bidirectional sync.
+        
+        Args:
+            changed_file (str): Path to the file that changed
+        """
+        logger.info(f"Starting bidirectional sync for change: {changed_file}")
         
         # Build the rclonesync command
         cmd = [
@@ -109,13 +185,11 @@ class ChangeHandler(FileSystemEventHandler):
             # Run the sync command
             logger.debug(f"Running command: {' '.join(cmd)}")
             subprocess.run(cmd, check=True)
-            logger.info("Sync completed successfully")
+            logger.info(f"Sync completed successfully for change: {changed_file}")
         except subprocess.CalledProcessError as e:
-            logger.error(f"Error during sync: {e}")
+            logger.error(f"Error during sync for {changed_file}: {e}")
         except Exception as e:
-            logger.error(f"Unexpected error during sync: {e}")
-        finally:
-            self.sync_in_progress = False
+            logger.error(f"Unexpected error during sync for {changed_file}: {e}")
 
 def start_monitoring(vault_dir, remote_dir, exclude_patterns, debounce_time, log_file):
     """
@@ -146,8 +220,11 @@ def start_monitoring(vault_dir, remote_dir, exclude_patterns, debounce_time, log
     log_path = Path(log_file).parent
     log_path.mkdir(parents=True, exist_ok=True)
     
+    # Create the sync queue
+    sync_queue = SyncQueue()
+    
     # Set up the event handler and observer
-    event_handler = ChangeHandler(vault_dir, remote_dir, exclude_patterns, debounce_time, log_file)
+    event_handler = ChangeHandler(vault_dir, remote_dir, exclude_patterns, debounce_time, log_file, sync_queue)
     observer = Observer()
     observer.schedule(event_handler, vault_dir, recursive=True)
     
