@@ -38,6 +38,25 @@ if [ -z "$LOCAL_DIR" ]; then
     exit 1
 fi
 
+# Check if required tools are installed
+if ! command -v python3 &> /dev/null; then
+    echo "Error: Python 3 is required but not installed."
+    echo "Please run the setup script first: ./setup.sh"
+    exit 1
+fi
+
+if ! command -v rclone &> /dev/null; then
+    echo "rclone is not installed. Please run the setup script first: ./setup.sh"
+    exit 1
+fi
+
+# Check if virtual environment exists
+VENV_DIR="$HOME/.secure_cloud_syncer_venv"
+if [ ! -d "$VENV_DIR" ]; then
+    echo "Virtual environment not found. Please run the setup script first: ./setup.sh"
+    exit 1
+fi
+
 # Expand the path if it contains ~
 LOCAL_DIR="${LOCAL_DIR/#\~/$HOME}"
 
@@ -90,20 +109,9 @@ if [ "$EXCLUDE_RESOURCE_FORKS" = true ]; then
     EXCLUDE_PATTERNS="$EXCLUDE_PATTERNS --exclude \"._*\" --exclude \"**/._*\""
 fi
 
-# Perform the sync with encryption
-eval "rclone sync \"$LOCAL_DIR\" \"$REMOTE_DIR\" \
-    --verbose \
-    --progress \
-    --stats-one-line \
-    --stats 5s \
-    --log-file \"$LOG_FILE\" \
-    --transfers 4 \
-    --checkers 8 \
-    --contimeout 60s \
-    --timeout 300s \
-    --retries 3 \
-    --low-level-retries 10 \
-    $EXCLUDE_PATTERNS"
+# Activate virtual environment and run the Python module
+source "$VENV_DIR/bin/activate"
+python3 -m secure_cloud_syncer.sync.one_way "$LOCAL_DIR" --exclude-resource-forks="$EXCLUDE_RESOURCE_FORKS"
 
 # Check sync status
 if [ $? -eq 0 ]; then

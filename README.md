@@ -5,7 +5,7 @@ A tool for securely syncing files with Google Drive using encryption.
 ## Features
 
 - **One-way Sync**: Sync files from a local directory to an encrypted Google Drive folder
-- **Bidirectional Sync**: Sync files between a local directory and an encrypted Google Drive folder
+- **Bidirectional Sync**: Sync files between a local directory and an encrypted Google Drive folder using rclone's bisync feature
 - **File Monitoring**: Monitor a directory for changes and automatically trigger syncs
 - **Cross-Platform**: Works on macOS, Linux, and Windows
 - **Encryption**: All files are encrypted before being uploaded to Google Drive
@@ -25,9 +25,15 @@ A tool for securely syncing files with Google Drive using encryption.
    ```
 
    This will:
-   - Install required dependencies (rclone, rclonesync, Python packages)
+   - Install required dependencies (rclone, Python packages)
    - Set up rclone with Google Drive
    - Configure encryption
+
+## Requirements
+
+- rclone 1.58.0 or newer (for bisync support)
+- Python 3.6+
+- watchdog (for file monitoring)
 
 ## Usage
 
@@ -103,13 +109,6 @@ Logs are stored in:
 - `~/.rclone/sync.log` for one-way syncs
 - `~/.rclone/bidirectional_sync.log` for bidirectional syncs
 - `~/.rclone/monitor_sync.log` for monitoring
-
-## Requirements
-
-- Python 3.6+
-- rclone
-- rclonesync
-- watchdog
 
 ## License
 

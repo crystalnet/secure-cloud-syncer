@@ -29,7 +29,7 @@ def build_exclude_patterns(exclude_resource_forks=False):
         exclude_resource_forks (bool): Whether to exclude macOS resource fork files
         
     Returns:
-        str: The exclude patterns as a string
+        list: The exclude patterns as a list of arguments
     """
     exclude_patterns = [
         "--exclude", ".DS_Store",
@@ -66,15 +66,15 @@ def build_exclude_patterns(exclude_resource_forks=False):
         ])
         logger.info("Excluding macOS resource fork files (._*)")
     
-    return " ".join(exclude_patterns)
+    return exclude_patterns
 
 def sync_directory(local_dir, remote_dir="gdrive_encrypted:", exclude_resource_forks=False, log_file=None):
     """
-    Sync a local directory to Google Drive.
+    Perform a one-way sync from a local directory to Google Drive using rclone sync.
     
     Args:
         local_dir (str): Path to the local directory to sync
-        remote_dir (str): Remote directory to sync to
+        remote_dir (str): Remote directory to sync with
         exclude_resource_forks (bool): Whether to exclude macOS resource fork files
         log_file (str): Path to the log file
         
@@ -106,7 +106,7 @@ def sync_directory(local_dir, remote_dir="gdrive_encrypted:", exclude_resource_f
     # Build the exclude patterns
     exclude_patterns = build_exclude_patterns(exclude_resource_forks)
     
-    # Build the rclone command
+    # Build the rclone sync command
     cmd = [
         "rclone",
         "sync",
@@ -126,22 +126,22 @@ def sync_directory(local_dir, remote_dir="gdrive_encrypted:", exclude_resource_f
     ]
     
     # Add exclude patterns
-    cmd.extend(exclude_patterns.split())
+    cmd.extend(exclude_patterns)
     
     # Log the start of the sync
-    logger.info(f"Starting sync from {local_dir} to {remote_dir}")
+    logger.info(f"Starting one-way sync from {local_dir} to {remote_dir}")
     
     try:
         # Run the sync command
         logger.debug(f"Running command: {' '.join(cmd)}")
         subprocess.run(cmd, check=True)
-        logger.info("Sync completed successfully")
+        logger.info("One-way sync completed successfully")
         return True
     except subprocess.CalledProcessError as e:
-        logger.error(f"Error during sync: {e}")
+        logger.error(f"Error during one-way sync: {e}")
         return False
     except Exception as e:
-        logger.error(f"Unexpected error during sync: {e}")
+        logger.error(f"Unexpected error during one-way sync: {e}")
         return False
 
 def main():

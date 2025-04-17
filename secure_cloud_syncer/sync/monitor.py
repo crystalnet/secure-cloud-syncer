@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-File system monitoring module for Secure Cloud Syncer.
-This module monitors a directory for changes and triggers a bidirectional sync when changes are detected.
+Monitor module for Secure Cloud Syncer.
+This module provides functionality for monitoring a directory and triggering bidirectional syncs.
 """
 
 import time
@@ -9,8 +9,7 @@ import os
 import sys
 import logging
 import subprocess
-import threading
-import queue
+import re
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -26,96 +25,103 @@ logging.basicConfig(
 )
 logger = logging.getLogger("secure_cloud_syncer.monitor")
 
-class SyncQueue:
+def check_rclone_version():
     """
-    Queue for managing sync requests.
-    Ensures that syncs are processed sequentially and no changes are lost.
+    Check if rclone version is 1.58.0 or newer (required for bisync).
+    
+    Returns:
+        bool: True if version is sufficient, False otherwise
     """
+    try:
+        result = subprocess.run(
+            ["rclone", "version"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        version_match = re.search(r"rclone v(\d+\.\d+\.\d+)", result.stdout)
+        if version_match:
+            version = version_match.group(1)
+            major, minor, patch = map(int, version.split('.'))
+            if major > 1 or (major == 1 and minor >= 58):
+                return True
+        logger.error("rclone version 1.58.0 or newer is required for bisync")
+        return False
+    except Exception as e:
+        logger.error(f"Error checking rclone version: {e}")
+        return False
+
+def build_exclude_patterns(exclude_resource_forks=False):
+    """
+    Build the exclude patterns for rclone.
     
-    def __init__(self):
-        """
-        Initialize the sync queue.
-        """
-        self.queue = queue.Queue()
-        self.processing = False
-        self.lock = threading.Lock()
-        self.worker_thread = None
-        logger.info("Initialized sync queue")
+    Args:
+        exclude_resource_forks (bool): Whether to exclude macOS resource fork files
+        
+    Returns:
+        list: The exclude patterns as a list of arguments
+    """
+    exclude_patterns = [
+        "--exclude", ".DS_Store",
+        "--exclude", ".DS_Store/**",
+        "--exclude", "**/.DS_Store",
+        "--exclude", ".Trash/**",
+        "--exclude", "**/.Trash/**",
+        "--exclude", ".localized",
+        "--exclude", "**/.localized",
+        "--exclude", ".Spotlight-V100",
+        "--exclude", "**/.Spotlight-V100/**",
+        "--exclude", ".fseventsd",
+        "--exclude", "**/.fseventsd/**",
+        "--exclude", ".TemporaryItems",
+        "--exclude", "**/.TemporaryItems/**",
+        "--exclude", ".VolumeIcon.icns",
+        "--exclude", "**/.VolumeIcon.icns",
+        "--exclude", ".DocumentRevisions-V100",
+        "--exclude", "**/.DocumentRevisions-V100/**",
+        "--exclude", ".com.apple.timemachine.donotpresent",
+        "--exclude", "**/.com.apple.timemachine.donotpresent",
+        "--exclude", ".AppleDouble",
+        "--exclude", "**/.AppleDouble/**",
+        "--exclude", ".LSOverride",
+        "--exclude", "**/.LSOverride/**",
+        "--exclude", "Icon?",
+        "--exclude", "**/Icon?"
+    ]
     
-    def add_request(self, sync_func, *args, **kwargs):
-        """
-        Add a sync request to the queue.
-        
-        Args:
-            sync_func: The function to call for syncing
-            *args: Positional arguments for the sync function
-            **kwargs: Keyword arguments for the sync function
-        """
-        self.queue.put((sync_func, args, kwargs))
-        logger.debug(f"Added sync request to queue. Queue size: {self.queue.qsize()}")
-        
-        # Start the worker thread if it's not running
-        with self.lock:
-            if not self.processing and (self.worker_thread is None or not self.worker_thread.is_alive()):
-                self.worker_thread = threading.Thread(target=self._process_queue)
-                self.worker_thread.daemon = True
-                self.worker_thread.start()
-                logger.debug("Started sync worker thread")
+    if exclude_resource_forks:
+        exclude_patterns.extend([
+            "--exclude", "._*",
+            "--exclude", "**/._*"
+        ])
+        logger.info("Excluding macOS resource fork files (._*)")
     
-    def _process_queue(self):
-        """
-        Process sync requests from the queue.
-        """
-        with self.lock:
-            self.processing = True
-        
-        logger.info("Sync worker thread started")
-        
-        try:
-            while not self.queue.empty():
-                # Get the next sync request
-                sync_func, args, kwargs = self.queue.get()
-                logger.info(f"Processing sync request. Queue size: {self.queue.qsize()}")
-                
-                try:
-                    # Execute the sync function
-                    sync_func(*args, **kwargs)
-                except Exception as e:
-                    logger.error(f"Error during sync: {e}")
-                finally:
-                    # Mark the task as done
-                    self.queue.task_done()
-        finally:
-            with self.lock:
-                self.processing = False
-            logger.info("Sync worker thread finished")
+    return exclude_patterns
 
 class ChangeHandler(FileSystemEventHandler):
     """
-    Handler for file system events that triggers bidirectional sync when changes are detected.
+    Handler for file system events.
     """
-    
-    def __init__(self, vault_dir, remote_dir, exclude_patterns, debounce_time, log_file, sync_queue):
+    def __init__(self, local_dir, remote_dir, exclude_resource_forks=False, debounce_time=5, log_file=None):
         """
         Initialize the change handler.
         
         Args:
-            vault_dir (str): Path to the vault directory to monitor
+            local_dir (str): Path to the local directory to monitor
             remote_dir (str): Remote directory to sync with
-            exclude_patterns (str): Rclone exclude patterns
-            debounce_time (float): Time in seconds to wait after a change before triggering sync
+            exclude_resource_forks (bool): Whether to exclude macOS resource fork files
+            debounce_time (int): Time in seconds to wait before syncing after changes
             log_file (str): Path to the log file
-            sync_queue (SyncQueue): Queue for managing sync requests
         """
-        self.vault_dir = vault_dir
+        self.local_dir = local_dir
         self.remote_dir = remote_dir
-        self.exclude_patterns = exclude_patterns
+        self.exclude_resource_forks = exclude_resource_forks
         self.debounce_time = debounce_time
         self.log_file = log_file
-        self.sync_queue = sync_queue
-        self.last_change_time = 0
-        logger.info(f"Initialized change handler for {vault_dir}")
-
+        self.last_sync = 0
+        self.sync_pending = False
+        self.exclude_patterns = build_exclude_patterns(exclude_resource_forks)
+    
     def on_any_event(self, event):
         """
         Handle any file system event.
@@ -126,119 +132,134 @@ class ChangeHandler(FileSystemEventHandler):
         if event.is_directory:
             return
         
-        # Ignore temporary files
-        if event.src_path.endswith('.tmp') or event.src_path.endswith('.temp'):
+        # Skip temporary files and hidden files
+        if event.src_path.endswith('~') or os.path.basename(event.src_path).startswith('.'):
             return
-            
+        
+        # Check if the file is in the monitored directory
+        try:
+            rel_path = os.path.relpath(event.src_path, self.local_dir)
+            if rel_path.startswith('..'):
+                return
+        except ValueError:
+            return
+        
         current_time = time.time()
-        
-        # Debounce: only queue a sync if enough time has passed since the last change
-        if current_time - self.last_change_time < self.debounce_time:
-            logger.debug(f"Ignoring change due to debounce: {event.src_path}")
+        if current_time - self.last_sync < self.debounce_time:
+            self.sync_pending = True
             return
-            
-        self.last_change_time = current_time
         
-        # Log the change
-        logger.info(f"Change detected: {event.src_path}")
-        logger.info("Queueing bidirectional sync...")
-        
-        # Add the sync request to the queue
-        self.sync_queue.add_request(
-            self._perform_sync,
-            event.src_path
-        )
+        self.sync_pending = False
+        self.last_sync = current_time
+        self.sync_directory()
     
-    def _perform_sync(self, changed_file):
+    def sync_directory(self):
         """
-        Perform a bidirectional sync.
-        
-        Args:
-            changed_file (str): Path to the file that changed
+        Perform a bidirectional sync using rclone bisync.
         """
-        logger.info(f"Starting bidirectional sync for change: {changed_file}")
-        
-        # Build the rclonesync command
+        # Build the rclone bisync command
         cmd = [
-            "rclonesync",
-            self.vault_dir,
+            "rclone",
+            "bisync",
+            self.local_dir,
             self.remote_dir,
-            "--rclone-args", self.exclude_patterns + " --verbose --log-file " + self.log_file,
-            "--rclone-timeout", "300",
-            "--rclone-retries", "3",
-            "--rclone-low-level-retries", "10",
-            "--rclone-transfers", "4",
-            "--rclone-checkers", "8",
-            "--rclone-contimeout", "60s",
-            "--rclone-timeout", "300s",
-            "--rclone-retries", "3",
-            "--rclone-low-level-retries", "10",
-            "--rclone-progress",
-            "--rclone-stats-one-line",
-            "--rclone-stats", "5s",
-            "--log-level", "INFO",
+            "--resync",
+            "--verbose",
             "--log-file", self.log_file,
-            "--one-time"
+            "--transfers", "4",
+            "--checkers", "8",
+            "--contimeout", "60s",
+            "--timeout", "300s",
+            "--retries", "3",
+            "--low-level-retries", "10",
+            "--progress",
+            "--stats-one-line",
+            "--stats", "5s"
         ]
+        
+        # Add exclude patterns
+        cmd.extend(self.exclude_patterns)
+        
+        # Log the start of the sync
+        logger.info(f"Starting bidirectional sync between {self.local_dir} and {self.remote_dir}")
         
         try:
             # Run the sync command
             logger.debug(f"Running command: {' '.join(cmd)}")
             subprocess.run(cmd, check=True)
-            logger.info(f"Sync completed successfully for change: {changed_file}")
+            logger.info("Bidirectional sync completed successfully")
         except subprocess.CalledProcessError as e:
-            logger.error(f"Error during sync for {changed_file}: {e}")
+            logger.error(f"Error during bidirectional sync: {e}")
         except Exception as e:
-            logger.error(f"Unexpected error during sync for {changed_file}: {e}")
+            logger.error(f"Unexpected error during bidirectional sync: {e}")
 
-def start_monitoring(vault_dir, remote_dir, exclude_patterns, debounce_time, log_file):
+def start_monitoring(local_dir, remote_dir="gdrive_encrypted:", exclude_resource_forks=False, debounce_time=5, log_file=None):
     """
-    Start monitoring a directory for changes.
+    Start monitoring a directory for changes and trigger bidirectional syncs.
     
     Args:
-        vault_dir (str): Path to the vault directory to monitor
+        local_dir (str): Path to the local directory to monitor
         remote_dir (str): Remote directory to sync with
-        exclude_patterns (str): Rclone exclude patterns
-        debounce_time (float): Time in seconds to wait after a change before triggering sync
+        exclude_resource_forks (bool): Whether to exclude macOS resource fork files
+        debounce_time (int): Time in seconds to wait before syncing after changes
         log_file (str): Path to the log file
+        
+    Returns:
+        bool: True if monitoring started successfully, False otherwise
     """
     # Validate inputs
-    vault_path = Path(vault_dir)
-    if not vault_path.exists():
-        logger.error(f"Vault directory does not exist: {vault_dir}")
+    local_path = Path(local_dir)
+    if not local_path.exists():
+        logger.error(f"Local directory does not exist: {local_dir}")
         return False
     
-    if not vault_path.is_dir():
-        logger.error(f"Vault path is not a directory: {vault_dir}")
+    if not local_path.is_dir():
+        logger.error(f"Local path is not a directory: {local_dir}")
         return False
     
-    if not os.access(vault_dir, os.R_OK):
-        logger.error(f"Vault directory is not readable: {vault_dir}")
+    if not os.access(local_dir, os.R_OK):
+        logger.error(f"Local directory is not readable: {local_dir}")
         return False
+    
+    # Check rclone version
+    if not check_rclone_version():
+        return False
+    
+    # Set default log file if not provided
+    if log_file is None:
+        log_file = os.path.expanduser("~/.rclone/monitor_sync.log")
     
     # Create log directory if it doesn't exist
     log_path = Path(log_file).parent
     log_path.mkdir(parents=True, exist_ok=True)
     
-    # Create the sync queue
-    sync_queue = SyncQueue()
+    # Initialize the change handler
+    event_handler = ChangeHandler(
+        local_dir,
+        remote_dir,
+        exclude_resource_forks,
+        debounce_time,
+        log_file
+    )
     
-    # Set up the event handler and observer
-    event_handler = ChangeHandler(vault_dir, remote_dir, exclude_patterns, debounce_time, log_file, sync_queue)
+    # Set up the observer
     observer = Observer()
-    observer.schedule(event_handler, vault_dir, recursive=True)
+    observer.schedule(event_handler, local_dir, recursive=True)
     
     # Start the observer
     observer.start()
-    logger.info(f"Started monitoring {vault_dir}")
-    logger.info(f"Press Ctrl+C to stop")
+    logger.info(f"Started monitoring {local_dir}")
     
     try:
         while True:
             time.sleep(1)
+            if event_handler.sync_pending and time.time() - event_handler.last_sync >= debounce_time:
+                event_handler.sync_pending = False
+                event_handler.last_sync = time.time()
+                event_handler.sync_directory()
     except KeyboardInterrupt:
         observer.stop()
-        logger.info("Monitoring stopped")
+        logger.info("Stopped monitoring")
     
     observer.join()
     return True
@@ -247,17 +268,28 @@ def main():
     """
     Main entry point for the monitor script.
     """
-    if len(sys.argv) < 6:
-        print("Usage: python monitor_vault.py <vault_dir> <remote_dir> <exclude_patterns> <debounce_time> <log_file>")
+    if len(sys.argv) < 2:
+        print("Usage: python monitor.py <local_directory> [--exclude-resource-forks] [--debounce-time <seconds>]")
         sys.exit(1)
-        
-    vault_dir = sys.argv[1]
-    remote_dir = sys.argv[2]
-    exclude_patterns = sys.argv[3]
-    debounce_time = float(sys.argv[4])
-    log_file = sys.argv[5]
     
-    success = start_monitoring(vault_dir, remote_dir, exclude_patterns, debounce_time, log_file)
+    local_dir = sys.argv[1]
+    exclude_resource_forks = "--exclude-resource-forks" in sys.argv
+    debounce_time = 5
+    
+    # Parse debounce time if provided
+    if "--debounce-time" in sys.argv:
+        try:
+            debounce_index = sys.argv.index("--debounce-time")
+            if debounce_index + 1 < len(sys.argv):
+                debounce_time = int(sys.argv[debounce_index + 1])
+        except (ValueError, IndexError):
+            print("Invalid debounce time. Using default value of 5 seconds.")
+    
+    success = start_monitoring(
+        local_dir,
+        exclude_resource_forks=exclude_resource_forks,
+        debounce_time=debounce_time
+    )
     sys.exit(0 if success else 1)
 
 if __name__ == "__main__":

@@ -1,2 +1,1 @@
-rclonesync>=0.3.0
 watchdog>=2.1.0 

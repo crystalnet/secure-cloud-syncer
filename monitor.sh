@@ -52,14 +52,24 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
-if ! command -v rclonesync &> /dev/null; then
-    echo "rclonesync is not installed. Please run the setup script first: ./setup.sh"
+if ! command -v rclone &> /dev/null; then
+    echo "rclone is not installed. Please run the setup script first: ./setup.sh"
     exit 1
 fi
 
-# Check if watchdog is installed
-if ! python3 -c "import watchdog" &> /dev/null; then
-    echo "watchdog is not installed. Please run the setup script first: ./setup.sh"
+# Check rclone version for bisync support
+RCLONE_VERSION=$(rclone version | grep -oP 'rclone v\K[0-9]+\.[0-9]+\.[0-9]+')
+if [[ "$(echo "$RCLONE_VERSION 1.58.0" | awk '{print ($1 < $2)}')" -eq 1 ]]; then
+    echo "Error: Your rclone version ($RCLONE_VERSION) is older than 1.58.0 which is required for bisync."
+    echo "Please update rclone to version 1.58.0 or newer."
+    echo "You can download it from: https://rclone.org/downloads/"
+    exit 1
+fi
+
+# Check if virtual environment exists
+VENV_DIR="$HOME/.secure_cloud_syncer_venv"
+if [ ! -d "$VENV_DIR" ]; then
+    echo "Virtual environment not found. Please run the setup script first: ./setup.sh"
     exit 1
 fi
 
@@ -86,7 +96,7 @@ log_message() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
 }
 
-# Build the exclude patterns for rclonesync
+# Build the exclude patterns for rclone
 EXCLUDE_PATTERNS="--exclude \".DS_Store\" --exclude \".DS_Store/**\" --exclude \"**/.DS_Store\" \
     --exclude \".Trash/**\" --exclude \"**/.Trash/**\" \
     --exclude \".localized\" --exclude \"**/.localized\" \
@@ -118,5 +128,6 @@ echo "when changes are detected. Files will be encrypted in the cloud."
 echo "Press Ctrl+C to stop the monitoring process."
 echo "----------------------------------------"
 
-# Run the Python module with the necessary arguments
+# Activate virtual environment and run the Python module
+source "$VENV_DIR/bin/activate"
 python3 -m secure_cloud_syncer.sync.monitor "$VAULT_DIR" "$REMOTE_DIR" "$EXCLUDE_PATTERNS" "$DEBOUNCE_TIME" "$LOG_FILE" 

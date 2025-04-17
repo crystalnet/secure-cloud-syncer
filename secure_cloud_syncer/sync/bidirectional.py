@@ -8,6 +8,7 @@ import os
 import sys
 import logging
 import subprocess
+import re
 from pathlib import Path
 
 # Configure logging
@@ -21,9 +22,35 @@ logging.basicConfig(
 )
 logger = logging.getLogger("secure_cloud_syncer.bidirectional")
 
+def check_rclone_version():
+    """
+    Check if rclone version is 1.58.0 or newer for bisync support.
+    
+    Returns:
+        bool: True if rclone version is 1.58.0 or newer, False otherwise
+    """
+    try:
+        result = subprocess.run(["rclone", "version"], capture_output=True, text=True, check=True)
+        version_match = re.search(r'rclone v(\d+\.\d+\.\d+)', result.stdout)
+        if version_match:
+            version = version_match.group(1)
+            major, minor, patch = map(int, version.split('.'))
+            if major > 1 or (major == 1 and minor > 57):
+                return True
+            logger.error(f"rclone version {version} is older than 1.58.0 which is required for bisync")
+            return False
+        logger.error("Could not determine rclone version")
+        return False
+    except subprocess.CalledProcessError:
+        logger.error("Failed to run rclone version command")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error checking rclone version: {e}")
+        return False
+
 def build_exclude_patterns(exclude_resource_forks=False):
     """
-    Build the exclude patterns for rclonesync.
+    Build the exclude patterns for rclone.
     
     Args:
         exclude_resource_forks (bool): Whether to exclude macOS resource fork files
@@ -66,11 +93,11 @@ def build_exclude_patterns(exclude_resource_forks=False):
         ])
         logger.info("Excluding macOS resource fork files (._*)")
     
-    return " ".join(exclude_patterns)
+    return exclude_patterns
 
 def sync_bidirectional(local_dir, remote_dir="gdrive_encrypted:", exclude_resource_forks=False, log_file=None):
     """
-    Perform a bidirectional sync between a local directory and Google Drive.
+    Perform a bidirectional sync between a local directory and Google Drive using rclone bisync.
     
     Args:
         local_dir (str): Path to the local directory to sync
@@ -81,6 +108,11 @@ def sync_bidirectional(local_dir, remote_dir="gdrive_encrypted:", exclude_resour
     Returns:
         bool: True if sync was successful, False otherwise
     """
+    # Check rclone version
+    if not check_rclone_version():
+        logger.error("rclone version 1.58.0 or newer is required for bisync")
+        return False
+    
     # Validate inputs
     local_path = Path(local_dir)
     if not local_path.exists():
@@ -106,28 +138,19 @@ def sync_bidirectional(local_dir, remote_dir="gdrive_encrypted:", exclude_resour
     # Build the exclude patterns
     exclude_patterns = build_exclude_patterns(exclude_resource_forks)
     
-    # Build the rclonesync command
+    # Build the rclone bisync command
     cmd = [
-        "rclonesync",
+        "rclone",
+        "bisync",
         local_dir,
         remote_dir,
-        "--rclone-args", exclude_patterns + " --verbose --log-file " + log_file,
-        "--rclone-timeout", "300",
-        "--rclone-retries", "3",
-        "--rclone-low-level-retries", "10",
-        "--rclone-transfers", "4",
-        "--rclone-checkers", "8",
-        "--rclone-contimeout", "60s",
-        "--rclone-timeout", "300s",
-        "--rclone-retries", "3",
-        "--rclone-low-level-retries", "10",
-        "--rclone-progress",
-        "--rclone-stats-one-line",
-        "--rclone-stats", "5s",
-        "--log-level", "INFO",
-        "--log-file", log_file,
-        "--one-time"
+        "--resync",
+        "--verbose",
+        "--log-file", log_file
     ]
+    
+    # Add exclude patterns
+    cmd.extend(exclude_patterns)
     
     # Log the start of the sync
     logger.info(f"Starting bidirectional sync between {local_dir} and {remote_dir}")
