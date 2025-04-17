@@ -1,0 +1,18 @@
+# Rclone configuration
+rclone.conf
+.rclone.conf
+
+# Environment variables and secrets
+.env
+*.env
+
+# Logs
+*.log
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp 

@@ -1,0 +1,18 @@
+[gdrive]
+type = drive
+client_id = YOUR_CLIENT_ID
+client_secret = YOUR_CLIENT_SECRET
+token = YOUR_TOKEN
+scope = drive.file
+
+[gdrive_encrypted]
+type = crypt
+remote = gdrive:encrypted
+filename_encryption = standard
+directory_name_encryption = true
+password = YOUR_ENCRYPTION_PASSWORD
+password2 = YOUR_SALT_PASSWORD
+
+# Optional: Configure bandwidth limits
+# bandwidth_limit = 10M
+# bandwidth_limit_remote = 10M 
