@@ -1,115 +1,171 @@
 # Secure Cloud Syncer
 
-A tool for securely syncing files with Google Drive using encryption.
+A secure cloud syncing tool that provides encrypted synchronization with Google Drive, featuring automatic monitoring and bidirectional sync capabilities.
 
 ## Features
 
-- **One-way Sync**: Sync files from a local directory to an encrypted Google Drive folder
-- **Bidirectional Sync**: Sync files between a local directory and an encrypted Google Drive folder using rclone's bisync feature
-- **File Monitoring**: Monitor a directory for changes and automatically trigger syncs
-- **Cross-Platform**: Works on macOS, Linux, and Windows
-- **Encryption**: All files are encrypted before being uploaded to Google Drive
-- **System File Exclusion**: Automatically excludes system files like `.DS_Store`
+- 🔒 End-to-end encryption for all synced files
+- 🔄 Bidirectional synchronization with Google Drive
+- 👀 Automatic monitoring of local folders
+- 🚀 Background service for continuous operation
+- 🔄 On-the-fly configuration updates
+- 🛠️ Easy setup and configuration
 
 ## Installation
 
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/yourusername/secure-cloud-syncer.git
-   cd secure-cloud-syncer
-   ```
+### Prerequisites
 
-2. Run the setup script:
-   ```bash
-   ./setup.sh
-   ```
+- Python 3.6 or higher
+- rclone (will be installed automatically)
+- Google Drive account
 
-   This will:
-   - Install required dependencies (rclone, Python packages)
-   - Set up rclone with Google Drive
-   - Configure encryption
+### Installation Options
 
-## Requirements
+#### 1. Direct Installation (Recommended)
 
-- rclone 1.58.0 or newer (for bisync support)
-- Python 3.6+
-- watchdog (for file monitoring)
+```bash
+# Clone the repository
+git clone https://github.com/crystalnet/secure-cloud-syncer.git
+cd secure-cloud-syncer
+
+# Install the package and dependencies
+pip install -e .
+```
+
+This will:
+- Install the package and all dependencies
+- Set up rclone configuration
+- Install the background service (but not start it)
+
+#### 2. Using pip (Coming Soon)
+
+```bash
+pip install secure-cloud-syncer
+```
+
+#### 3. Using Homebrew (Coming Soon)
+
+```bash
+brew install secure-cloud-syncer
+```
 
 ## Usage
 
-### One-way Sync
+### Initial Setup
 
-To sync files from a local directory to Google Drive:
+1. Configure rclone (if not done during installation):
+   ```bash
+   scs setup
+   ```
 
-```bash
-./sync.sh [--exclude-resource-forks] <local_directory>
-```
+2. Add a folder to sync:
+   ```bash
+   scs add <name> <local_path>
+   ```
+   Example:
+   ```bash
+   scs add documents ~/Documents
+   ```
 
-Example:
-```bash
-./sync.sh ~/Documents
-```
+3. Start the sync service:
+   ```bash
+   scs service start
+   ```
 
-### Bidirectional Sync
+### Managing Syncs
 
-To sync files between a local directory and Google Drive in both directions:
+- List all sync configurations:
+  ```bash
+  scs list
+  ```
 
-```bash
-./bidirectional_sync.sh [--exclude-resource-forks] <local_directory>
-```
+- Start a specific sync:
+  ```bash
+  scs start <name>
+  ```
 
-Example:
-```bash
-./bidirectional_sync.sh ~/secure_vault
-```
+- Stop a specific sync:
+  ```bash
+  scs stop <name>
+  ```
 
-### File Monitoring
+- Restart a specific sync:
+  ```bash
+  scs restart <name>
+  ```
 
-To monitor a directory for changes and automatically trigger bidirectional syncs:
+### Service Management
 
-```bash
-./monitor.sh [--exclude-resource-forks] [--debounce SECONDS] <vault_directory>
-```
+- Start the sync service:
+  ```bash
+  scs service start
+  ```
 
-Example:
-```bash
-./monitor.sh ~/secure_vault
-```
+- Stop the sync service:
+  ```bash
+  scs service stop
+  ```
 
-Example with options:
-```bash
-./monitor.sh --exclude-resource-forks --debounce 10 ~/secure_vault
-```
+- Check service status:
+  ```bash
+  scs service status
+  ```
 
-## Python Package
+- Reload service configuration:
+  ```bash
+  scs service reload
+  ```
 
-The project also provides a Python package for more advanced usage:
+## Configuration
 
-```python
-from secure_cloud_syncer.sync import one_way, bidirectional, monitor
-
-# One-way sync
-one_way.sync_directory("/path/to/local/dir")
-
-# Bidirectional sync
-bidirectional.sync_bidirectional("/path/to/local/dir")
-
-# Start monitoring
-monitor.start_monitoring("/path/to/vault/dir", "gdrive_encrypted:", exclude_patterns, 5.0, "/path/to/log/file")
-```
-
-## Options
-
-- `--exclude-resource-forks`: Exclude macOS resource fork files (._*)
-- `--debounce SECONDS`: Set the debounce time in seconds (default: 5)
+The tool uses rclone for cloud synchronization. Configuration files are stored in:
+- `~/.rclone/rclone.conf` - rclone configuration
+- `~/.rclone/scs_config.json` - sync configurations
 
 ## Logs
 
 Logs are stored in:
-- `~/.rclone/sync.log` for one-way syncs
-- `~/.rclone/bidirectional_sync.log` for bidirectional syncs
-- `~/.rclone/monitor_sync.log` for monitoring
+- `~/.rclone/scs.log` - CLI and sync operations
+- `~/Library/Logs/secure_cloud_syncer/` - Service logs
+
+## Development
+
+### Project Structure
+
+```
+secure-cloud-syncer/
+├── setup.py               # Package setup file
+├── README.md
+├── LICENSE
+├── requirements.txt
+└── secure_cloud_syncer/
+    ├── __init__.py
+    ├── cli.py             # Command-line interface
+    ├── config.py          # Configuration management
+    ├── manager.py         # Sync manager daemon
+    ├── monitor.py         # File system monitoring
+    ├── sync.py            # Sync operations
+    ├── scripts/
+    │   ├── rclone_setup.sh
+    │   └── service_setup.sh
+    └── templates/
+        └── .rclone.conf.template
+```
+
+### Running Tests
+
+```bash
+python -m pytest tests/
+```
 
 ## License
 
-MIT 
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request 

@@ -4,12 +4,13 @@ Monitor module for Secure Cloud Syncer.
 This module provides functionality for monitoring a directory and triggering bidirectional syncs.
 """
 
-import time
 import os
 import sys
+import time
 import logging
 import subprocess
 import re
+import multiprocessing
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -59,9 +60,9 @@ def build_exclude_patterns(exclude_resource_forks=False):
         exclude_resource_forks (bool): Whether to exclude macOS resource fork files
         
     Returns:
-        list: The exclude patterns as a list of arguments
+        list: List of exclude patterns
     """
-    exclude_patterns = [
+    patterns = [
         "--exclude", ".DS_Store",
         "--exclude", ".DS_Store/**",
         "--exclude", "**/.DS_Store",
@@ -90,13 +91,12 @@ def build_exclude_patterns(exclude_resource_forks=False):
     ]
     
     if exclude_resource_forks:
-        exclude_patterns.extend([
+        patterns.extend([
             "--exclude", "._*",
             "--exclude", "**/._*"
         ])
-        logger.info("Excluding macOS resource fork files (._*)")
     
-    return exclude_patterns
+    return patterns
 
 class ChangeHandler(FileSystemEventHandler):
     """
@@ -193,9 +193,9 @@ class ChangeHandler(FileSystemEventHandler):
         except Exception as e:
             logger.error(f"Unexpected error during bidirectional sync: {e}")
 
-def start_monitoring(local_dir, remote_dir="gdrive_encrypted:", exclude_resource_forks=False, debounce_time=5, log_file=None):
+def monitor_process(local_dir, remote_dir, exclude_resource_forks, debounce_time, log_file):
     """
-    Start monitoring a directory for changes and trigger bidirectional syncs.
+    Monitor process that runs in the background.
     
     Args:
         local_dir (str): Path to the local directory to monitor
@@ -203,27 +203,24 @@ def start_monitoring(local_dir, remote_dir="gdrive_encrypted:", exclude_resource
         exclude_resource_forks (bool): Whether to exclude macOS resource fork files
         debounce_time (int): Time in seconds to wait before syncing after changes
         log_file (str): Path to the log file
-        
-    Returns:
-        bool: True if monitoring started successfully, False otherwise
     """
     # Validate inputs
     local_path = Path(local_dir)
     if not local_path.exists():
         logger.error(f"Local directory does not exist: {local_dir}")
-        return False
+        return
     
     if not local_path.is_dir():
         logger.error(f"Local path is not a directory: {local_dir}")
-        return False
+        return
     
     if not os.access(local_dir, os.R_OK):
         logger.error(f"Local directory is not readable: {local_dir}")
-        return False
+        return
     
     # Check rclone version
     if not check_rclone_version():
-        return False
+        return
     
     # Set default log file if not provided
     if log_file is None:
@@ -262,6 +259,31 @@ def start_monitoring(local_dir, remote_dir="gdrive_encrypted:", exclude_resource
         logger.info("Stopped monitoring")
     
     observer.join()
+
+def start_monitoring(local_dir, remote_dir="gdrive_encrypted:", exclude_resource_forks=False, debounce_time=5, log_file=None, background=False):
+    """
+    Start monitoring a directory for changes and trigger bidirectional syncs.
+    
+    Args:
+        local_dir (str): Path to the local directory to monitor
+        remote_dir (str): Remote directory to sync with
+        exclude_resource_forks (bool): Whether to exclude macOS resource fork files
+        debounce_time (int): Time in seconds to wait before syncing after changes
+        log_file (str): Path to the log file
+        background (bool): Whether to run the monitoring in the background
+        
+    Returns:
+        multiprocessing.Process or bool: The monitoring process if background=True, True if successful otherwise
+    """
+    if background:
+        process = multiprocessing.Process(
+            target=monitor_process,
+            args=(local_dir, remote_dir, exclude_resource_forks, debounce_time, log_file)
+        )
+        process.start()
+        return process
+    
+    monitor_process(local_dir, remote_dir, exclude_resource_forks, debounce_time, log_file)
     return True
 
 def main():

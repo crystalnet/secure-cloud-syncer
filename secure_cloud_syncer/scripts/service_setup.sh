@@ -7,7 +7,12 @@ set -e
 LAUNCH_AGENT_NAME="com.secure_cloud_syncer.monitor"
 LAUNCH_AGENT_DIR="$HOME/Library/LaunchAgents"
 PLIST_FILE="com.secure_cloud_syncer.monitor.plist"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG_DIR="$HOME/Library/Logs/secure_cloud_syncer"
+
+# Function to print messages
+print_message() {
+    echo "=== $1 ==="
+}
 
 # Function to check if the service is running
 check_service() {
@@ -17,47 +22,78 @@ check_service() {
 
 # Function to start the service
 start_service() {
-    echo "Starting Secure Cloud Syncer monitoring service..."
+    print_message "Starting Secure Cloud Syncer monitoring service"
     launchctl load "$LAUNCH_AGENT_DIR/$PLIST_FILE"
     if check_service; then
-        echo "Service started successfully"
+        print_message "Service started successfully"
     else
-        echo "Failed to start service"
+        print_message "Failed to start service"
         exit 1
     fi
 }
 
 # Function to stop the service
 stop_service() {
-    echo "Stopping Secure Cloud Syncer monitoring service..."
+    print_message "Stopping Secure Cloud Syncer monitoring service"
     launchctl unload "$LAUNCH_AGENT_DIR/$PLIST_FILE"
     if ! check_service; then
-        echo "Service stopped successfully"
+        print_message "Service stopped successfully"
     else
-        echo "Failed to stop service"
+        print_message "Failed to stop service"
         exit 1
     fi
 }
 
 # Function to install the service
 install_service() {
-    echo "Installing Secure Cloud Syncer monitoring service..."
+    print_message "Installing Secure Cloud Syncer monitoring service"
     
     # Create LaunchAgents directory if it doesn't exist
     mkdir -p "$LAUNCH_AGENT_DIR"
     
-    # Copy the plist file
-    cp "$SCRIPT_DIR/$PLIST_FILE" "$LAUNCH_AGENT_DIR/"
+    # Create the plist file
+    cat > "$LAUNCH_AGENT_DIR/$PLIST_FILE" << EOL
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.secure_cloud_syncer.monitor</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$(which python3)</string>
+        <string>-m</string>
+        <string>secure_cloud_syncer.manager</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/error.log</string>
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/output.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
+EOL
     
     # Set correct permissions
     chmod 644 "$LAUNCH_AGENT_DIR/$PLIST_FILE"
     
-    echo "Service installed successfully"
+    # Create the log directory
+    mkdir -p "$LOG_DIR"
+    
+    print_message "Service installed successfully"
 }
 
 # Function to uninstall the service
 uninstall_service() {
-    echo "Uninstalling Secure Cloud Syncer monitoring service..."
+    print_message "Uninstalling Secure Cloud Syncer monitoring service"
     
     # Stop the service if it's running
     if check_service; then
@@ -67,15 +103,15 @@ uninstall_service() {
     # Remove the plist file
     rm -f "$LAUNCH_AGENT_DIR/$PLIST_FILE"
     
-    echo "Service uninstalled successfully"
+    print_message "Service uninstalled successfully"
 }
 
 # Function to show service status
 show_status() {
     if check_service; then
-        echo "Secure Cloud Syncer monitoring service is running"
+        print_message "Secure Cloud Syncer monitoring service is running"
     else
-        echo "Secure Cloud Syncer monitoring service is not running"
+        print_message "Secure Cloud Syncer monitoring service is not running"
     fi
 }
 
