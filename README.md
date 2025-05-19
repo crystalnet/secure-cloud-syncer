@@ -10,6 +10,7 @@ A secure cloud synchronization tool that provides encrypted, bidirectional synci
 - Resource fork handling for macOS
 - Service-based background operation
 - Simple command-line interface
+- Flexible Google Drive access levels (full or restricted)
 
 ## Installation
 
@@ -67,6 +68,9 @@ choco install secure-cloud-syncer
    ```bash
    scs setup
    ```
+   During setup, you'll be asked to choose between two Google Drive access levels:
+   - Full Access (recommended): Can sync any folder in your Google Drive
+   - Restricted Access: Can only sync folders created by the tool
 
 2. Add a folder to sync:
    ```bash
@@ -86,6 +90,22 @@ choco install secure-cloud-syncer
 ## Configuration
 
 The sync service automatically monitors the configuration file at `~/.rclone/scs_config.json`. You can modify this file directly or use the CLI commands to manage sync configurations.
+
+### Google Drive Access Levels
+
+When setting up Google Drive, you can choose between two access levels:
+
+1. **Full Access** (`drive` scope)
+   - Can sync any folder in your Google Drive
+   - No need to share folders with rclone
+   - Less private but more convenient
+   - Recommended for most users
+
+2. **Restricted Access** (`drive.file` scope)
+   - Can only sync folders created by the tool
+   - More private but less convenient
+   - Cannot sync existing folders unless created by the tool
+   - Recommended for privacy-conscious users
 
 ## Logs
 

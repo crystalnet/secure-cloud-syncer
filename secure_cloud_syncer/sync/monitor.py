@@ -102,7 +102,7 @@ class ChangeHandler(FileSystemEventHandler):
     """
     Handler for file system events.
     """
-    def __init__(self, local_dir, remote_dir, exclude_resource_forks=False, debounce_time=5, log_file=None):
+    def __init__(self, local_dir, remote_dir, exclude_resource_forks=False, debounce_time=5, log_file=None, direction="bidirectional"):
         """
         Initialize the change handler.
         
@@ -112,12 +112,14 @@ class ChangeHandler(FileSystemEventHandler):
             exclude_resource_forks (bool): Whether to exclude macOS resource fork files
             debounce_time (int): Time in seconds to wait before syncing after changes
             log_file (str): Path to the log file
+            direction (str): Sync direction - "bidirectional" or "upload"
         """
         self.local_dir = local_dir
         self.remote_dir = remote_dir
         self.exclude_resource_forks = exclude_resource_forks
         self.debounce_time = debounce_time
         self.log_file = log_file
+        self.direction = direction
         self.last_sync = 0
         self.sync_pending = False
         self.exclude_patterns = build_exclude_patterns(exclude_resource_forks)
@@ -155,45 +157,64 @@ class ChangeHandler(FileSystemEventHandler):
     
     def sync_directory(self):
         """
-        Perform a bidirectional sync using rclone bisync.
+        Perform a sync using rclone based on the configured direction.
         """
-        # Build the rclone bisync command
-        cmd = [
-            "rclone",
-            "bisync",
-            self.local_dir,
-            self.remote_dir,
-            "--resync",
-            "--verbose",
-            "--log-file", self.log_file,
-            "--transfers", "4",
-            "--checkers", "8",
-            "--contimeout", "60s",
-            "--timeout", "300s",
-            "--retries", "3",
-            "--low-level-retries", "10",
-            "--progress",
-            "--stats-one-line",
-            "--stats", "5s"
-        ]
+        if self.direction == "bidirectional":
+            # Build the rclone bisync command
+            cmd = [
+                "rclone",
+                "bisync",
+                self.local_dir,
+                self.remote_dir,
+                "--resync",
+                "--verbose",
+                "--log-file", self.log_file,
+                "--transfers", "4",
+                "--checkers", "8",
+                "--contimeout", "60s",
+                "--timeout", "300s",
+                "--retries", "3",
+                "--low-level-retries", "10",
+                "--progress",
+                "--stats-one-line",
+                "--stats", "5s"
+            ]
+            logger.info(f"Starting bidirectional sync between {self.local_dir} and {self.remote_dir}")
+        else:  # upload
+            # Build the rclone sync command for one-way upload
+            cmd = [
+                "rclone",
+                "sync",
+                self.local_dir,
+                self.remote_dir,
+                "--verbose",
+                "--log-file", self.log_file,
+                "--transfers", "4",
+                "--checkers", "8",
+                "--contimeout", "60s",
+                "--timeout", "300s",
+                "--retries", "3",
+                "--low-level-retries", "10",
+                "--progress",
+                "--stats-one-line",
+                "--stats", "5s"
+            ]
+            logger.info(f"Starting one-way sync from {self.local_dir} to {self.remote_dir}")
         
         # Add exclude patterns
         cmd.extend(self.exclude_patterns)
-        
-        # Log the start of the sync
-        logger.info(f"Starting bidirectional sync between {self.local_dir} and {self.remote_dir}")
         
         try:
             # Run the sync command
             logger.debug(f"Running command: {' '.join(cmd)}")
             subprocess.run(cmd, check=True)
-            logger.info("Bidirectional sync completed successfully")
+            logger.info("Sync completed successfully")
         except subprocess.CalledProcessError as e:
-            logger.error(f"Error during bidirectional sync: {e}")
+            logger.error(f"Error during sync: {e}")
         except Exception as e:
-            logger.error(f"Unexpected error during bidirectional sync: {e}")
+            logger.error(f"Unexpected error during sync: {e}")
 
-def monitor_process(local_dir, remote_dir, exclude_resource_forks, debounce_time, log_file):
+def monitor_process(local_dir, remote_dir, exclude_resource_forks, debounce_time, log_file, direction="bidirectional"):
     """
     Monitor process that runs in the background.
     
@@ -203,6 +224,7 @@ def monitor_process(local_dir, remote_dir, exclude_resource_forks, debounce_time
         exclude_resource_forks (bool): Whether to exclude macOS resource fork files
         debounce_time (int): Time in seconds to wait before syncing after changes
         log_file (str): Path to the log file
+        direction (str): Sync direction - "bidirectional" or "upload"
     """
     # Validate inputs
     local_path = Path(local_dir)
@@ -236,7 +258,8 @@ def monitor_process(local_dir, remote_dir, exclude_resource_forks, debounce_time
         remote_dir,
         exclude_resource_forks,
         debounce_time,
-        log_file
+        log_file,
+        direction
     )
     
     # Set up the observer
@@ -260,9 +283,9 @@ def monitor_process(local_dir, remote_dir, exclude_resource_forks, debounce_time
     
     observer.join()
 
-def start_monitoring(local_dir, remote_dir="gdrive_encrypted:", exclude_resource_forks=False, debounce_time=5, log_file=None, background=False):
+def start_monitoring(local_dir, remote_dir="gdrive_encrypted:", exclude_resource_forks=False, debounce_time=5, log_file=None, background=False, direction="bidirectional"):
     """
-    Start monitoring a directory for changes and trigger bidirectional syncs.
+    Start monitoring a directory for changes and trigger syncs.
     
     Args:
         local_dir (str): Path to the local directory to monitor
@@ -271,6 +294,7 @@ def start_monitoring(local_dir, remote_dir="gdrive_encrypted:", exclude_resource
         debounce_time (int): Time in seconds to wait before syncing after changes
         log_file (str): Path to the log file
         background (bool): Whether to run the monitoring in the background
+        direction (str): Sync direction - "bidirectional" or "upload"
         
     Returns:
         multiprocessing.Process or bool: The monitoring process if background=True, True if successful otherwise
@@ -278,12 +302,12 @@ def start_monitoring(local_dir, remote_dir="gdrive_encrypted:", exclude_resource
     if background:
         process = multiprocessing.Process(
             target=monitor_process,
-            args=(local_dir, remote_dir, exclude_resource_forks, debounce_time, log_file)
+            args=(local_dir, remote_dir, exclude_resource_forks, debounce_time, log_file, direction)
         )
         process.start()
         return process
     
-    monitor_process(local_dir, remote_dir, exclude_resource_forks, debounce_time, log_file)
+    monitor_process(local_dir, remote_dir, exclude_resource_forks, debounce_time, log_file, direction)
     return True
 
 def main():
