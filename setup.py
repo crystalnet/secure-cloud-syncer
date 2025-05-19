@@ -1,40 +1,37 @@
 #!/usr/bin/env python3
 """
 Setup script for Secure Cloud Syncer.
-This script handles the installation of the package and its dependencies,
-as well as setting up the service and rclone configuration.
+This script handles the installation of the package and its dependencies.
 """
 
 import os
 import sys
 import subprocess
 from setuptools import setup, find_packages
+from pathlib import Path
+
+def check_rclone():
+    """Check if rclone binary is installed."""
+    try:
+        subprocess.run(['rclone', 'version'], capture_output=True, check=True)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
 
 def install_service():
     """Install the sync service."""
-    script_path = os.path.join(os.path.dirname(__file__), 'secure_cloud_syncer', 'scripts', 'service_setup.sh')
-    if os.path.exists(script_path):
-        os.chmod(script_path, 0o755)
-        subprocess.run([script_path, 'install'], check=True)
-    else:
-        print("Warning: Service setup script not found at", script_path)
-
-def setup_rclone():
-    """Set up rclone configuration."""
-    script_path = os.path.join(os.path.dirname(__file__), 'secure_cloud_syncer', 'scripts', 'rclone_setup.sh')
-    if os.path.exists(script_path):
-        os.chmod(script_path, 0o755)
-        subprocess.run([script_path], check=True)
-    else:
-        print("Warning: Rclone setup script not found at", script_path)
+    service_script = Path(__file__).parent / "secure_cloud_syncer" / "scripts" / "service_setup.sh"
+    if service_script.exists():
+        subprocess.run(['bash', str(service_script)], check=True)
 
 setup(
-    name="secure_cloud_syncer",
+    name="secure-cloud-syncer",
     version="0.1.0",
     packages=find_packages(),
     install_requires=[
         "watchdog>=2.1.0",
         "psutil>=5.9.0",
+        "rclone>=0.1.0",  # Python wrapper for rclone
     ],
     entry_points={
         "console_scripts": [
@@ -66,8 +63,14 @@ setup(
     ],
 )
 
-# Run post-installation steps
+# Check for rclone binary
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "install":
-        install_service()
-        setup_rclone() 
+    if not check_rclone():
+        print("\nError: rclone binary not found!")
+        print("Please install rclone first:")
+        print("  macOS: brew install rclone")
+        print("  Linux: curl https://rclone.org/install.sh | sudo bash")
+        print("  Windows: Download from https://rclone.org/downloads/")
+        sys.exit(1)
+    
+    install_service() 

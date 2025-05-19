@@ -14,6 +14,7 @@ import psutil
 import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any
+import time
 
 from .sync import one_way, bidirectional, monitor
 
@@ -309,88 +310,315 @@ def reload_service():
         sys.exit(1)
 
 def setup_rclone():
-    """Set up rclone with Google Drive authentication and encryption."""
-    setup_script = Path(__file__).parent.parent / "setup.sh"
-    
-    if not setup_script.exists():
-        logger.error("Setup script not found")
-        sys.exit(1)
-    
+    """Set up rclone with cloud storage authentication and encryption."""
     try:
-        # Make the script executable
-        setup_script.chmod(0o755)
-        # Run the setup script
-        subprocess.run([str(setup_script)], check=True)
-        logger.info("Rclone setup completed successfully")
+        # Check if rclone is installed
+        subprocess.run(['rclone', 'version'], capture_output=True, check=True)
+        
+        # Create rclone config directory if it doesn't exist
+        config_dir = os.path.expanduser('~/.rclone')
+        os.makedirs(config_dir, exist_ok=True)
+        
+        print("\n=== Cloud Storage Setup ===")
+        print("Choose your cloud storage provider:")
+        print("1. Google Drive")
+        print("2. OneDrive")
+        print("3. Dropbox")
+        print("4. Custom Setup")
+        print("q. Quit")
+        
+        choice = input("\nEnter your choice (1-4, or q to quit): ").strip().lower()
+        
+        if choice == 'q':
+            print("Setup cancelled.")
+            sys.exit(0)
+        
+        # Ask about encryption preferences
+        print("\n=== Encryption Settings ===")
+        print("Choose your encryption preferences:")
+        print("1. Standard (preserve file and folder names)")
+        print("2. Obfuscate (encrypt file and folder names)")
+        print("3. Custom encryption settings")
+        
+        enc_choice = input("\nEnter your choice (1-3): ").strip()
+        
+        # Set encryption parameters based on choice
+        if enc_choice == '1':  # Standard
+            filename_encryption = 'standard'
+            directory_name_encryption = 'false'
+        elif enc_choice == '2':  # Obfuscate
+            filename_encryption = 'standard'
+            directory_name_encryption = 'true'
+        elif enc_choice == '3':  # Custom
+            print("\nCustom encryption settings:")
+            print("Filename encryption options:")
+            print("1. standard - Encrypt the filenames")
+            print("2. obfuscate - Very simple filename obfuscation")
+            print("3. off - Don't encrypt the file names")
+            filename_enc = input("Choose filename encryption (1-3): ").strip()
+            filename_encryption = {
+                '1': 'standard',
+                '2': 'obfuscate',
+                '3': 'off'
+            }.get(filename_enc, 'standard')
+            
+            print("\nDirectory name encryption:")
+            print("1. true - Encrypt directory names")
+            print("2. false - Don't encrypt directory names")
+            dir_enc = input("Choose directory encryption (1-2): ").strip()
+            directory_name_encryption = 'true' if dir_enc == '1' else 'false'
+        else:
+            print("Invalid choice, using standard encryption.")
+            filename_encryption = 'standard'
+            directory_name_encryption = 'false'
+        
+        # Get encryption password with confirmation
+        print("\n=== Encryption Settings ===")
+        print("Please enter a password for encryption.")
+        print("This password will be used to encrypt and decrypt your files.")
+        print("Make sure to remember this password - it cannot be recovered if lost!")
+        while True:
+            password = input("\nEnter encryption password: ").strip()
+            password2 = input("Confirm encryption password: ").strip()
+            if password == password2:
+                break
+            print("\n❌ Passwords do not match. Please try again.")
+        
+        # Generate a random salt
+        import secrets
+        import string
+        salt = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
+        
+        print("\nA secure random salt has been generated for encryption.")
+        print("This salt will be saved with your configuration.")
+        print("Salt:", salt)
+        
+        if choice == '1':  # Google Drive
+            print("\nSetting up Google Drive...")
+            print("A browser window will open for Google Drive authentication.")
+            
+            # Ask about team drive
+            print("\nDo you want to use a Google Workspace (formerly G Suite) team drive?")
+            print("1. No, use my personal Google Drive")
+            print("2. Yes, use a team drive")
+            team_drive_choice = input("\nEnter your choice (1-2): ").strip()
+            
+            # Create gdrive remote
+            if team_drive_choice == '2':
+                # For team drive, we need the team drive ID
+                print("\nPlease enter your team drive ID.")
+                print("You can find this in the URL when viewing your team drive:")
+                print("https://drive.google.com/drive/folders/TEAM_DRIVE_ID")
+                team_drive_id = input("\nEnter team drive ID: ").strip()
+                
+                result = subprocess.run(['rclone', 'config', 'create', 'gdrive', 'drive', 
+                              'scope', 'drive', 'root_folder_id', team_drive_id, 
+                              'service_account_file', '', 'advanced_config', 'n',
+                              'auto_config', 'y'], 
+                              capture_output=True, text=True)
+            else:
+                # For personal drive
+                result = subprocess.run(['rclone', 'config', 'create', 'gdrive', 'drive', 
+                              'scope', 'drive', 'root_folder_id', 'root', 
+                              'service_account_file', '', 'advanced_config', 'n',
+                              'auto_config', 'y'], 
+                              capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                print(f"\n❌ Error creating Google Drive remote:")
+                print(result.stderr)
+                sys.exit(1)
+            
+            # Create encrypted remote
+            result = subprocess.run(['rclone', 'config', 'create', 'gdrive-crypt', 'crypt',
+                          'remote', 'gdrive:', 'filename_encryption', filename_encryption,
+                          'directory_name_encryption', directory_name_encryption,
+                          'password', password, 'salt', salt,
+                          'password2', password,  # Required for crypt remote
+                          'show_mapping', 'false'], 
+                          capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"\n❌ Error creating encrypted remote:")
+                print(result.stderr)
+                sys.exit(1)
+            
+        elif choice == '2':  # OneDrive
+            print("\nSetting up OneDrive...")
+            print("A browser window will open for OneDrive authentication.")
+            # Create onedrive remote
+            result = subprocess.run(['rclone', 'config', 'create', 'onedrive', 'onedrive',
+                          'region', 'global', 'advanced_config', 'n', 
+                          'auto_config', 'y'], 
+                          capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"\n❌ Error creating OneDrive remote:")
+                print(result.stderr)
+                sys.exit(1)
+            
+            # Create encrypted remote
+            result = subprocess.run(['rclone', 'config', 'create', 'onedrive-crypt', 'crypt',
+                          'remote', 'onedrive:', 'filename_encryption', filename_encryption,
+                          'directory_name_encryption', directory_name_encryption,
+                          'password', password, 'salt', salt,
+                          'password2', password,  # Required for crypt remote
+                          'show_mapping', 'false'], 
+                          capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"\n❌ Error creating encrypted remote:")
+                print(result.stderr)
+                sys.exit(1)
+            
+        elif choice == '3':  # Dropbox
+            print("\nSetting up Dropbox...")
+            print("A browser window will open for Dropbox authentication.")
+            # Create dropbox remote
+            result = subprocess.run(['rclone', 'config', 'create', 'dropbox', 'dropbox',
+                          'advanced_config', 'n', 'auto_config', 'y'], 
+                          capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"\n❌ Error creating Dropbox remote:")
+                print(result.stderr)
+                sys.exit(1)
+            
+            # Create encrypted remote
+            result = subprocess.run(['rclone', 'config', 'create', 'dropbox-crypt', 'crypt',
+                          'remote', 'dropbox:', 'filename_encryption', filename_encryption,
+                          'directory_name_encryption', directory_name_encryption,
+                          'password', password, 'salt', salt,
+                          'password2', password,  # Required for crypt remote
+                          'show_mapping', 'false'], 
+                          capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"\n❌ Error creating encrypted remote:")
+                print(result.stderr)
+                sys.exit(1)
+            
+        elif choice == '4':  # Custom Setup
+            print("\nStarting custom rclone configuration...")
+            print("Please follow the prompts to set up your cloud storage.")
+            print("For encryption, you'll need to set up a second remote with the '-crypt' suffix")
+            print("and choose 'crypt' as the storage type.")
+            subprocess.run(['rclone', 'config'], check=True)
+            
+        else:
+            print("Invalid choice. Please try again.")
+            return setup_rclone()
+        
+        # Verify configuration
+        remote_name = {
+            '1': 'gdrive',
+            '2': 'onedrive',
+            '3': 'dropbox'
+        }.get(choice)
+        
+        if remote_name:
+            try:
+                # For Google Drive, we need to use a different verification method
+                if remote_name == 'gdrive':
+                    # Try to create a test directory
+                    test_dir = f"scs-test-{int(time.time())}"
+                    result = subprocess.run(['rclone', 'mkdir', f'{remote_name}:{test_dir}'], 
+                                          capture_output=True, text=True)
+                    if result.returncode == 0:
+                        # Clean up the test directory
+                        subprocess.run(['rclone', 'rmdir', f'{remote_name}:{test_dir}'], 
+                                     capture_output=True, text=True)
+                        print(f"\n✅ {remote_name.capitalize()} configuration successful!")
+                        print("\nNext steps:")
+                        print("1. Add a folder to sync: scs add <name> <local-path> --remote-dir <remote-path>")
+                        print("2. Start the sync service: scs service start")
+                    else:
+                        print(f"\n❌ {remote_name.capitalize()} configuration failed:")
+                        print(result.stderr)
+                        sys.exit(1)
+                else:
+                    # For other providers, use the original ls method
+                    result = subprocess.run(['rclone', 'ls', f'{remote_name}:'], 
+                                          capture_output=True, text=True)
+                    if result.returncode == 0:
+                        print(f"\n✅ {remote_name.capitalize()} configuration successful!")
+                        print("\nNext steps:")
+                        print("1. Add a folder to sync: scs add <name> <local-path> --remote-dir <remote-path>")
+                        print("2. Start the sync service: scs service start")
+                    else:
+                        print(f"\n❌ {remote_name.capitalize()} configuration failed:")
+                        print(result.stderr)
+                        sys.exit(1)
+            except subprocess.CalledProcessError as e:
+                print(f"\n❌ {remote_name.capitalize()} configuration failed:")
+                print(e.stderr)
+                sys.exit(1)
+        else:
+            print("\n✅ Custom configuration completed!")
+            print("\nNext steps:")
+            print("1. Add a folder to sync: scs add <name> <local-path> --remote-dir <remote-path>")
+            print("2. Start the sync service: scs service start")
+            
+    except FileNotFoundError:
+        print("\n❌ rclone binary not found!")
+        print("Please install rclone first:")
+        print("  macOS: brew install rclone")
+        print("  Linux: curl https://rclone.org/install.sh | sudo bash")
+        print("  Windows: Download from https://rclone.org/downloads/")
+        sys.exit(1)
     except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to setup rclone: {e}")
+        print(f"\n❌ Error during rclone setup: {e}")
+        if hasattr(e, 'stderr'):
+            print(e.stderr)
         sys.exit(1)
     except Exception as e:
-        logger.error(f"Error during rclone setup: {e}")
+        print(f"\n❌ Unexpected error: {e}")
         sys.exit(1)
 
 def main():
     """Main entry point for the CLI."""
-    parser = argparse.ArgumentParser(description="Secure Cloud Syncer CLI")
-    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+    parser = argparse.ArgumentParser(description='Secure Cloud Syncer CLI')
+    subparsers = parser.add_subparsers(dest='command', help='Commands')
     
     # Setup command
-    subparsers.add_parser("setup", help="Set up rclone with Google Drive authentication and encryption")
+    setup_parser = subparsers.add_parser('setup', help='Set up rclone with Google Drive')
     
     # Add command
-    add_parser = subparsers.add_parser("add", help="Add a new sync configuration")
-    add_parser.add_argument("name", help="Name of the sync configuration")
-    add_parser.add_argument("local_dir", help="Local directory to sync")
-    add_parser.add_argument("--remote-dir", required=True, help="Remote directory to sync")
-    add_parser.add_argument("--mode", choices=["one-way", "bidirectional", "monitor"],
-                          default="one-way", help="Sync mode")
-    add_parser.add_argument("--exclude-resource-forks", action="store_true",
-                          help="Exclude macOS resource fork files")
-    add_parser.add_argument("--debounce-time", type=int, default=5,
-                          help="Debounce time for monitor mode (in seconds)")
+    add_parser = subparsers.add_parser('add', help='Add a new sync configuration')
+    add_parser.add_argument('name', help='Name of the sync configuration')
+    add_parser.add_argument('local_path', help='Local path to sync')
+    add_parser.add_argument('--remote-dir', required=True, help='Remote directory path')
+    add_parser.add_argument('--mode', choices=['upload', 'download', 'bidirectional'], 
+                          default='bidirectional', help='Sync mode')
     
     # List command
-    subparsers.add_parser("list", help="List all sync configurations")
+    subparsers.add_parser('list', help='List all sync configurations')
     
     # Remove command
-    remove_parser = subparsers.add_parser("remove", help="Remove a sync configuration")
-    remove_parser.add_argument("name", help="Name of the sync configuration to remove")
+    remove_parser = subparsers.add_parser('remove', help='Remove a sync configuration')
+    remove_parser.add_argument('name', help='Name of the sync configuration to remove')
     
     # Service commands
-    service_parser = subparsers.add_parser("service", help="Manage the sync service")
-    service_subparsers = service_parser.add_subparsers(dest="service_command",
-                                                     help="Service command to execute")
-    
-    service_subparsers.add_parser("start", help="Start the sync service")
-    service_subparsers.add_parser("stop", help="Stop the sync service")
-    service_subparsers.add_parser("reload", help="Reload the sync service configuration")
-    service_subparsers.add_parser("status", help="Check the sync service status")
+    service_parser = subparsers.add_parser('service', help='Manage the sync service')
+    service_subparsers = service_parser.add_subparsers(dest='service_command', help='Service commands')
+    service_subparsers.add_parser('start', help='Start the sync service')
+    service_subparsers.add_parser('stop', help='Stop the sync service')
+    service_subparsers.add_parser('status', help='Check service status')
     
     args = parser.parse_args()
     
-    if args.command == "setup":
+    if args.command == 'setup':
         setup_rclone()
-    elif args.command == "add":
-        add_sync(args.name, args.local_dir, args.remote_dir, args.mode,
-                args.exclude_resource_forks, args.debounce_time)
-    elif args.command == "list":
+    elif args.command == 'add':
+        add_sync(args.name, args.local_path, args.remote_dir, args.mode)
+    elif args.command == 'list':
         list_syncs()
-    elif args.command == "remove":
+    elif args.command == 'remove':
         remove_sync(args.name)
-    elif args.command == "service":
-        if args.service_command == "start":
+    elif args.command == 'service':
+        if args.service_command == 'start':
             start_service()
-        elif args.service_command == "stop":
+        elif args.service_command == 'stop':
             stop_service()
-        elif args.service_command == "reload":
-            reload_service()
-        elif args.service_command == "status":
-            if is_service_running():
-                print("Sync service is running")
-            else:
-                print("Sync service is not running")
+        elif args.service_command == 'status':
+            check_service_status()
         else:
-            parser.print_help()
+            service_parser.print_help()
     else:
         parser.print_help()
 

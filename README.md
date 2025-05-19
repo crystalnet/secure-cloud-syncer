@@ -1,70 +1,76 @@
 # Secure Cloud Syncer
 
-A secure cloud syncing tool that provides encrypted synchronization with Google Drive, featuring automatic monitoring and bidirectional sync capabilities.
+A secure cloud synchronization tool that provides encrypted, bidirectional syncing with Google Drive.
 
 ## Features
 
-- 🔒 End-to-end encryption for all synced files
-- 🔄 Bidirectional synchronization with Google Drive
-- 👀 Automatic monitoring of local folders
-- 🚀 Background service for continuous operation
-- 🔄 On-the-fly configuration updates
-- 🛠️ Easy setup and configuration
+- Encrypted file synchronization with Google Drive
+- Bidirectional sync support
+- Real-time file monitoring
+- Resource fork handling for macOS
+- Service-based background operation
+- Simple command-line interface
 
 ## Installation
 
 ### Prerequisites
 
 - Python 3.6 or higher
-- rclone (will be installed automatically)
-- Google Drive account
+- rclone binary (required for Google Drive configuration)
 
-### Installation Options
+Install rclone:
+- macOS: `brew install rclone`
+- Linux: `curl https://rclone.org/install.sh | sudo bash`
+- Windows: Download from [rclone.org/downloads](https://rclone.org/downloads/)
 
-#### 1. Direct Installation (Recommended)
+### From Source
 
-```bash
-# Clone the repository
-git clone https://github.com/crystalnet/secure-cloud-syncer.git
-cd secure-cloud-syncer
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/crystalnet/secure-cloud-syncer.git
+   cd secure-cloud-syncer
+   ```
 
-# Install the package and dependencies
-pip install -e .
-```
+2. Install the package:
+   ```bash
+   pip3 install .
+   ```
 
 This will:
 - Install the package and all dependencies
-- Set up rclone configuration
-- Install the background service (but not start it)
+- Set up the sync service
+- Create the `scs` command-line tool
 
-#### 2. Using pip (Coming Soon)
+Note: After installation, you may need to restart your terminal or run `source ~/.zshrc` (or your shell's rc file) to update your PATH.
+
+### From PyPI (Coming Soon)
 
 ```bash
-pip install secure-cloud-syncer
+pip3 install secure-cloud-syncer
 ```
 
-#### 3. Using Homebrew (Coming Soon)
+### From Homebrew (Coming Soon)
 
 ```bash
 brew install secure-cloud-syncer
 ```
 
+### From Chocolatey (Coming Soon)
+
+```bash
+choco install secure-cloud-syncer
+```
+
 ## Usage
 
-### Initial Setup
-
-1. Configure rclone (if not done during installation):
+1. Set up rclone with Google Drive:
    ```bash
    scs setup
    ```
 
 2. Add a folder to sync:
    ```bash
-   scs add <name> <local_path>
-   ```
-   Example:
-   ```bash
-   scs add documents ~/Documents
+   scs add my-sync ~/Documents/my-folder --remote-dir "My Folder" --mode bidirectional
    ```
 
 3. Start the sync service:
@@ -72,100 +78,30 @@ brew install secure-cloud-syncer
    scs service start
    ```
 
-### Managing Syncs
-
-- List all sync configurations:
-  ```bash
-  scs list
-  ```
-
-- Start a specific sync:
-  ```bash
-  scs start <name>
-  ```
-
-- Stop a specific sync:
-  ```bash
-  scs stop <name>
-  ```
-
-- Restart a specific sync:
-  ```bash
-  scs restart <name>
-  ```
-
-### Service Management
-
-- Start the sync service:
-  ```bash
-  scs service start
-  ```
-
-- Stop the sync service:
-  ```bash
-  scs service stop
-  ```
-
-- Check service status:
-  ```bash
-  scs service status
-  ```
-
-- Reload service configuration:
-  ```bash
-  scs service reload
-  ```
+4. Check sync status:
+   ```bash
+   scs list
+   ```
 
 ## Configuration
 
-The tool uses rclone for cloud synchronization. Configuration files are stored in:
-- `~/.rclone/rclone.conf` - rclone configuration
-- `~/.rclone/scs_config.json` - sync configurations
+The sync service automatically monitors the configuration file at `~/.rclone/scs_config.json`. You can modify this file directly or use the CLI commands to manage sync configurations.
 
 ## Logs
 
-Logs are stored in:
-- `~/.rclone/scs.log` - CLI and sync operations
-- `~/Library/Logs/secure_cloud_syncer/` - Service logs
+Logs are stored in `~/.rclone/scs.log`. You can monitor the sync service's operation by checking this file.
 
 ## Development
 
-### Project Structure
-
-```
-secure-cloud-syncer/
-├── setup.py               # Package setup file
-├── README.md
-├── LICENSE
-├── requirements.txt
-└── secure_cloud_syncer/
-    ├── __init__.py
-    ├── cli.py             # Command-line interface
-    ├── config.py          # Configuration management
-    ├── manager.py         # Sync manager daemon
-    ├── monitor.py         # File system monitoring
-    ├── sync.py            # Sync operations
-    ├── scripts/
-    │   ├── rclone_setup.sh
-    │   └── service_setup.sh
-    └── templates/
-        └── .rclone.conf.template
-```
-
-### Running Tests
-
+For development, install the package in editable mode:
 ```bash
-python -m pytest tests/
+pip3 install -e .
 ```
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Contributing
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request 
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details. 
