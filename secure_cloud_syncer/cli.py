@@ -415,6 +415,11 @@ def stop_service():
         logger.error(f"Error stopping sync service: {e}")
         sys.exit(1)
 
+def restart_service():
+    """Restart the sync service."""
+    stop_service()
+    start_service()
+
 def reload_service():
     """Reload the sync service configuration."""
     if not is_service_running():

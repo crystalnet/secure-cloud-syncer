@@ -167,6 +167,7 @@ class ChangeHandler(FileSystemEventHandler):
                 self.local_dir,
                 self.remote_dir,
                 "--resync",
+                "--delete",
                 "--verbose",
                 "--log-file", self.log_file,
                 "--transfers", "4",
