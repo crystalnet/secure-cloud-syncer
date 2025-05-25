@@ -8,6 +8,8 @@ import os
 import sys
 import subprocess
 from setuptools import setup, find_packages
+from setuptools.command.develop import develop
+from setuptools.command.install import install
 from pathlib import Path
 
 def check_rclone():
@@ -24,6 +26,16 @@ def install_service():
     if service_script.exists():
         subprocess.run(['bash', str(service_script)], check=True)
 
+class PostDevelopCommand(develop):
+    def run(self):
+        develop.run(self)
+        install_service()
+
+class PostInstallCommand(install):
+    def run(self):
+        install.run(self)
+        install_service()
+
 setup(
     name="secure-cloud-syncer",
     version="0.1.0",
@@ -36,6 +48,9 @@ setup(
     entry_points={
         "console_scripts": [
             "scs=secure_cloud_syncer.cli:main",
+        ],
+        "setuptools.installation": [
+            "uninstall=secure_cloud_syncer.cli:cleanup_setup",
         ],
     },
     package_data={
@@ -61,6 +76,10 @@ setup(
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
     ],
+    cmdclass={
+        'develop': PostDevelopCommand,
+        'install': PostInstallCommand,
+    }
 )
 
 # Check for rclone binary
@@ -71,6 +90,4 @@ if __name__ == "__main__":
         print("  macOS: brew install rclone")
         print("  Linux: curl https://rclone.org/install.sh | sudo bash")
         print("  Windows: Download from https://rclone.org/downloads/")
-        sys.exit(1)
-    
-    install_service() 
+        sys.exit(1) 

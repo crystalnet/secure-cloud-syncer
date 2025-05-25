@@ -21,36 +21,54 @@ from watchdog.events import FileSystemEventHandler
 from logging.handlers import RotatingFileHandler
 
 from .sync import one_way, bidirectional, monitor
+print(f"DEBUG: monitor module: {monitor}")  # This will show us what we're actually importing
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(os.path.expanduser("~/.rclone/scs_manager.log"))
-    ]
-)
-logger = logging.getLogger("secure_cloud_syncer.manager")
+def setup_logging():
+    """
+    Set up logging configuration for the manager process.
+    This should be called once at startup.
+    """
+    # Create log directory if it doesn't exist
+    log_dir = os.path.expanduser("~/.rclone")
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Configure root logger
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(os.path.join(log_dir, "scs_manager.log"))
+        ],
+        force=True  # Force reconfiguration
+    )
+    
+    # Get the logger for this module
+    logger = logging.getLogger("secure_cloud_syncer.manager")
+    
+    # Add a rotating file handler for better log management
+    rotating_handler = RotatingFileHandler(
+        os.path.join(log_dir, "scs_manager.log"),
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5
+    )
+    rotating_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    logger.addHandler(rotating_handler)
+    
+    # Set up error logging to a separate file
+    error_handler = RotatingFileHandler(
+        os.path.join(log_dir, "scs_manager.error.log"),
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5
+    )
+    error_handler.setLevel(logging.ERROR)
+    error_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s\n%(pathname)s:%(lineno)d\n%(message)s'))
+    logger.addHandler(error_handler)
+    
+    return logger
 
-# Add a rotating file handler for better log management
-rotating_handler = RotatingFileHandler(
-    os.path.expanduser("~/.rclone/scs_manager.log"),
-    maxBytes=10*1024*1024,  # 10MB
-    backupCount=5
-)
-rotating_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-logger.addHandler(rotating_handler)
-
-# Set up error logging to a separate file
-error_handler = RotatingFileHandler(
-    os.path.expanduser("~/.rclone/scs_manager.error.log"),
-    maxBytes=10*1024*1024,  # 10MB
-    backupCount=5
-)
-error_handler.setLevel(logging.ERROR)
-error_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s\n%(pathname)s:%(lineno)d\n%(message)s'))
-logger.addHandler(error_handler)
+# Set up logging at module level
+logger = setup_logging()
 
 CONFIG_FILE = os.path.expanduser("~/.rclone/scs_config.json")
 SOCKET_FILE = os.path.expanduser("~/.rclone/scs.sock")
@@ -72,87 +90,119 @@ class ConfigWatcher(FileSystemEventHandler):
                 self.manager.reload_config()
 
 class SyncTask:
-    """Represents a running sync task."""
-    def __init__(self, name: str, config: Dict[str, Any]):
-        self.name = name
+    """
+    Represents a sync task with its configuration and process.
+    """
+    def __init__(self, config):
+        """
+        Initialize a sync task.
+        
+        Args:
+            config (dict): Task configuration
+        """
         self.config = config
-        self.process: Optional[multiprocessing.Process] = None
-        self.start_time: Optional[float] = None
-        self.last_error: Optional[str] = None
-        self.error_count: int = 0
-        self.restart_count: int = 0
-        self.max_restarts: int = 5
-        self.restart_delay: int = 30  # seconds
+        self.observer = None
+        self.start_time = None
+        self.last_error = None
+        self.error_count = 0
+        self.restart_count = 0
+        self.logger = logging.getLogger("secure_cloud_syncer.manager.task")
     
     def start(self):
-        """Start the sync task."""
-        if self.process is not None and self.process.is_alive():
-            logger.warning(f"Task {self.name} is already running")
-            return
+        """
+        Start the sync task.
+        
+        Returns:
+            bool: True if the task started successfully, False otherwise
+        """
         try:
-            logger.info(f"Starting task {self.name} with config: {self.config}")
-            # Start monitoring with the appropriate direction
-            self.process = monitor.start_monitoring(
-                self.config["local_dir"],
-                self.config["remote_dir"],
-                self.config["exclude_resource_forks"],
-                self.config["debounce_time"],
-                background=True,
-                direction=self.config["mode"]  # Use the mode as the direction
+            self.logger.info(f"Starting task with config: {self.config}")
+            
+            # Validate required fields
+            required_fields = ['local_dir', 'remote_dir']
+            for field in required_fields:
+                if field not in self.config:
+                    self.logger.error(f"Missing required field: {field}")
+                    return False
+            
+            # Get configuration values with defaults
+            local_dir = self.config['local_dir']
+            remote_dir = self.config.get('remote_dir', 'gdrive_encrypted:')
+            exclude_resource_forks = self.config.get('exclude_resource_forks', False)
+            debounce_time = self.config.get('debounce_time', 5)
+            direction = self.config.get('direction', 'bidirectional')
+            
+            self.logger.info(f"Starting monitor for {local_dir}")
+            self.observer = monitor.start_monitoring(
+                local_dir=local_dir,
+                remote_dir=remote_dir,
+                exclude_resource_forks=exclude_resource_forks,
+                debounce_time=debounce_time,
+                direction=direction
             )
+            
+            if not isinstance(self.observer, Observer):
+                self.logger.error("Failed to create observer")
+                return False
+            
             self.start_time = time.time()
             self.last_error = None
             self.error_count = 0
             self.restart_count = 0
-            logger.info(f"Task {self.name} started successfully")
+            
+            self.logger.info(f"Task started successfully")
+            return True
+            
         except Exception as e:
+            self.logger.error(f"Error starting task: {e}", exc_info=True)
             self.last_error = str(e)
             self.error_count += 1
-            logger.error(f"Error starting task {self.name}: {e}")
-            raise
+            return False
     
     def stop(self):
-        """Stop the sync task."""
-        if self.process is None or not self.process.is_alive():
-            logger.warning(f"Task {self.name} is not running")
-            return
+        """
+        Stop the sync task.
         
+        Returns:
+            bool: True if the task was stopped successfully, False otherwise
+        """
         try:
-            logger.info(f"Stopping task {self.name} (PID: {self.process.pid})")
-            self.process.terminate()
-            self.process.join(timeout=5)
-            if self.process.is_alive():
-                logger.warning(f"Task {self.name} did not terminate gracefully, forcing kill")
-                self.process.kill()
-                self.process.join()
-            logger.info(f"Stopped task {self.name}")
+            if self.observer and self.observer.is_alive():
+                self.logger.info("Stopping task")
+                self.observer.stop()
+                self.observer.join()
+                self.observer = None
+                self.logger.info("Task stopped successfully")
+                return True
+            return False
         except Exception as e:
-            logger.error(f"Error stopping task {self.name}: {e}", exc_info=True)
-        finally:
-            self.process = None
-            self.start_time = None
-    
-    def is_running(self) -> bool:
-        """Check if the task is running."""
-        if self.process is None:
+            self.logger.error(f"Error stopping task: {e}", exc_info=True)
             return False
-        if not self.process.is_alive():
-            logger.warning(f"Task {self.name} process is not alive")
-            return False
-        return True
     
-    def check_health(self):
-        """Check the health of the task and restart if necessary."""
-        if not self.is_running():
-            if self.restart_count < self.max_restarts:
-                logger.warning(f"Task {self.name} is not running, attempting restart ({self.restart_count + 1}/{self.max_restarts})")
-                time.sleep(self.restart_delay)
-                self.restart_count += 1
-                self.start()
-            else:
-                logger.error(f"Task {self.name} failed to start after {self.max_restarts} attempts")
-                logger.error(f"Last error: {self.last_error}")
-                logger.error(f"Total errors: {self.error_count}")
+    def is_running(self):
+        """
+        Check if the task is running.
+        
+        Returns:
+            bool: True if the task is running, False otherwise
+        """
+        return self.observer is not None and self.observer.is_alive()
+    
+    def get_status(self):
+        """
+        Get the current status of the task.
+        
+        Returns:
+            dict: Task status information
+        """
+        return {
+            'running': self.is_running(),
+            'start_time': self.start_time,
+            'uptime': time.time() - self.start_time if self.start_time else None,
+            'last_error': self.last_error,
+            'error_count': self.error_count,
+            'restart_count': self.restart_count
+        }
 
 class SyncManager:
     """Manages sync tasks and handles config updates."""
@@ -166,8 +216,8 @@ class SyncManager:
         self.watchdog_thread = None
         self.last_activity = time.time()
     
-    def start(self):
-        """Start the sync manager."""
+    def initialize(self):
+        """Initialize the sync manager (setup without starting)."""
         if self.running:
             logger.warning("Sync manager is already running")
             return
@@ -175,9 +225,6 @@ class SyncManager:
         # Start watching the config file
         self.observer.schedule(self.config_watcher, os.path.dirname(CONFIG_FILE), recursive=False)
         self.observer.start()
-        
-        # Load initial config
-        self.reload_config()
         
         # Start health check thread
         self.health_check_thread = threading.Thread(target=self._health_check_loop, daemon=True)
@@ -187,8 +234,20 @@ class SyncManager:
         self.watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
         self.watchdog_thread.start()
         
+        logger.info("Sync manager initialized")
+    
+    def start(self):
+        """Start the sync manager and load initial config."""
+        if self.running:
+            logger.warning("Sync manager is already running")
+            return
+        
+        # Mark as running before loading config
         self.running = True
         logger.info("Sync manager started")
+        
+        # Load initial config
+        self.reload_config()
     
     def stop(self):
         """Stop the sync manager."""
@@ -244,10 +303,10 @@ class SyncManager:
             if os.path.exists(PID_FILE):
                 os.remove(PID_FILE)
             
-            # Start new service process
+            # Start new service process with stdout/stderr preserved
             subprocess.Popen([sys.executable, "-m", "secure_cloud_syncer.manager"],
-                           stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL)
+                           stdout=sys.stdout,
+                           stderr=sys.stderr)
             logger.info("Service restarted by watchdog")
         except Exception as e:
             logger.error(f"Failed to restart service: {e}")
@@ -263,6 +322,7 @@ class SyncManager:
     def reload_config(self):
         """Reload the configuration and update tasks."""
         if not self.running:
+            logger.warning("Sync manager is not running, skipping config reload")
             return
         
         try:
@@ -290,12 +350,12 @@ class SyncManager:
                         if self.tasks[name].config != config:
                             logger.info(f"Updating task {name} with new config")
                             self.tasks[name].stop()
-                            self.tasks[name] = SyncTask(name, config)
+                            self.tasks[name] = SyncTask(config)
                             self.tasks[name].start()
                     else:
                         # Start new task
                         logger.info(f"Starting new task {name}")
-                        self.tasks[name] = SyncTask(name, config)
+                        self.tasks[name] = SyncTask(config)
                         self.tasks[name].start()
             
             logger.info("Configuration reloaded successfully")
@@ -306,14 +366,7 @@ class SyncManager:
         """Get the status of all tasks."""
         with self.lock:
             return {
-                name: {
-                    "running": task.is_running(),
-                    "start_time": task.start_time,
-                    "config": task.config,
-                    "error_count": task.error_count,
-                    "restart_count": task.restart_count,
-                    "last_error": task.last_error
-                }
+                name: task.get_status()
                 for name, task in self.tasks.items()
             }
 
@@ -398,6 +451,7 @@ def main():
     
     # Start manager
     manager = SyncManager()
+    manager.initialize()
     manager.start()
     
     try:

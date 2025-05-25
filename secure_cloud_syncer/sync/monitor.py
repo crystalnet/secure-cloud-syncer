@@ -15,16 +15,41 @@ from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(os.path.expanduser("~/.rclone/monitor_sync.log"))
-    ]
-)
-logger = logging.getLogger("secure_cloud_syncer.monitor")
+def setup_logging(log_file=None):
+    """
+    Set up logging configuration for the monitor process.
+    This should be called once at startup.
+    
+    Args:
+        log_file (str, optional): Path to the log file for rsync output.
+                                 If None, defaults to ~/.rclone/scs_monitor_rsync.log
+    
+    Returns:
+        tuple: (logger, log_file) where logger is the configured logger and log_file is the rsync log file path
+    """
+    # Create log directory if it doesn't exist
+    log_dir = os.path.expanduser("~/.rclone")
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Set default log file if not provided
+    if log_file is None:
+        log_file = os.path.join(log_dir, "scs_monitor_rsync.log")
+    
+    # Configure root logger
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(os.path.join(log_dir, "scs_monitor_python.log")),
+            logging.StreamHandler()
+        ],
+        force=True  # Force reconfiguration
+    )
+    
+    # Use the root logger
+    logger = logging.getLogger()
+    
+    return logger, log_file
 
 def check_rclone_version():
     """
@@ -215,76 +240,7 @@ class ChangeHandler(FileSystemEventHandler):
         except Exception as e:
             logger.error(f"Unexpected error during sync: {e}")
 
-def monitor_process(local_dir, remote_dir, exclude_resource_forks, debounce_time, log_file, direction="bidirectional"):
-    """
-    Monitor process that runs in the background.
-    
-    Args:
-        local_dir (str): Path to the local directory to monitor
-        remote_dir (str): Remote directory to sync with
-        exclude_resource_forks (bool): Whether to exclude macOS resource fork files
-        debounce_time (int): Time in seconds to wait before syncing after changes
-        log_file (str): Path to the log file
-        direction (str): Sync direction - "bidirectional" or "upload"
-    """
-    # Validate inputs
-    local_path = Path(local_dir)
-    if not local_path.exists():
-        logger.error(f"Local directory does not exist: {local_dir}")
-        return
-    
-    if not local_path.is_dir():
-        logger.error(f"Local path is not a directory: {local_dir}")
-        return
-    
-    if not os.access(local_dir, os.R_OK):
-        logger.error(f"Local directory is not readable: {local_dir}")
-        return
-    
-    # Check rclone version
-    if not check_rclone_version():
-        return
-    
-    # Set default log file if not provided
-    if log_file is None:
-        log_file = os.path.expanduser("~/.rclone/monitor_sync.log")
-    
-    # Create log directory if it doesn't exist
-    log_path = Path(log_file).parent
-    log_path.mkdir(parents=True, exist_ok=True)
-    
-    # Initialize the change handler
-    event_handler = ChangeHandler(
-        local_dir,
-        remote_dir,
-        exclude_resource_forks,
-        debounce_time,
-        log_file,
-        direction
-    )
-    
-    # Set up the observer
-    observer = Observer()
-    observer.schedule(event_handler, local_dir, recursive=True)
-    
-    # Start the observer
-    observer.start()
-    logger.info(f"Started monitoring {local_dir}")
-    
-    try:
-        while True:
-            time.sleep(1)
-            if event_handler.sync_pending and time.time() - event_handler.last_sync >= debounce_time:
-                event_handler.sync_pending = False
-                event_handler.last_sync = time.time()
-                event_handler.sync_directory()
-    except KeyboardInterrupt:
-        observer.stop()
-        logger.info("Stopped monitoring")
-    
-    observer.join()
-
-def start_monitoring(local_dir, remote_dir="gdrive_encrypted:", exclude_resource_forks=False, debounce_time=5, log_file=None, background=False, direction="bidirectional"):
+def start_monitoring(local_dir, remote_dir="gdrive_encrypted:", exclude_resource_forks=False, debounce_time=5, log_file=None, direction="bidirectional"):
     """
     Start monitoring a directory for changes and trigger syncs.
     
@@ -294,22 +250,63 @@ def start_monitoring(local_dir, remote_dir="gdrive_encrypted:", exclude_resource
         exclude_resource_forks (bool): Whether to exclude macOS resource fork files
         debounce_time (int): Time in seconds to wait before syncing after changes
         log_file (str): Path to the log file
-        background (bool): Whether to run the monitoring in the background
         direction (str): Sync direction - "bidirectional" or "upload"
         
     Returns:
-        multiprocessing.Process or bool: The monitoring process if background=True, True if successful otherwise
+        Observer: The watchdog observer instance
     """
-    if background:
-        process = multiprocessing.Process(
-            target=monitor_process,
-            args=(local_dir, remote_dir, exclude_resource_forks, debounce_time, log_file, direction)
+    try:
+        # Get the logger for this module
+        logger = logging.getLogger("secure_cloud_syncer.monitor")
+        
+        # Set up log file path
+        if log_file is None:
+            log_dir = os.path.expanduser("~/.rclone")
+            log_file = os.path.join(log_dir, "scs_monitor_rsync.log")
+        
+        logger.info(f"Starting monitoring for {local_dir}")
+        
+        # Validate inputs before starting process
+        local_path = Path(local_dir)
+        if not local_path.exists():
+            logger.error(f"Local directory does not exist: {local_dir}")
+            raise RuntimeError(f"Local directory does not exist: {local_dir}")
+        
+        if not local_path.is_dir():
+            logger.error(f"Local path is not a directory: {local_dir}")
+            raise RuntimeError(f"Local path is not a directory: {local_dir}")
+        
+        if not os.access(local_dir, os.R_OK):
+            logger.error(f"Local directory is not readable: {local_dir}")
+            raise RuntimeError(f"Local directory is not readable: {local_dir}")
+        
+        if not check_rclone_version():
+            logger.error("rclone version check failed")
+            raise RuntimeError("rclone version check failed")
+        
+        logger.info(f"Using log file: {log_file}")
+        
+        # Create event handler
+        event_handler = ChangeHandler(
+            local_dir=local_dir,
+            remote_dir=remote_dir,
+            exclude_resource_forks=exclude_resource_forks,
+            debounce_time=debounce_time,
+            log_file=log_file,
+            direction=direction
         )
-        process.start()
-        return process
-    
-    monitor_process(local_dir, remote_dir, exclude_resource_forks, debounce_time, log_file, direction)
-    return True
+        
+        # Create and start observer
+        observer = Observer()
+        observer.schedule(event_handler, local_dir, recursive=True)
+        observer.start()
+        
+        logger.info(f"Started monitoring {local_dir}")
+        return observer
+        
+    except Exception as e:
+        logger.error(f"Error starting monitor: {e}", exc_info=True)
+        raise
 
 def main():
     """
@@ -332,12 +329,12 @@ def main():
         except (ValueError, IndexError):
             print("Invalid debounce time. Using default value of 5 seconds.")
     
-    success = start_monitoring(
+    observer = start_monitoring(
         local_dir,
         exclude_resource_forks=exclude_resource_forks,
         debounce_time=debounce_time
     )
-    sys.exit(0 if success else 1)
+    sys.exit(0 if observer else 1)
 
 if __name__ == "__main__":
     main() 

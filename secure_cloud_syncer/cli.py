@@ -933,6 +933,43 @@ def resume_sync(name):
     logger.info(f"Resuming sync '{name}'...")
     start_sync(argparse.Namespace(name=name))
 
+def uninstall():
+    """Uninstall the package and remove all configurations."""
+    print("\n=== Uninstalling Secure Cloud Syncer ===")
+    
+    # First run the cleanup process
+    cleanup_setup()
+    
+    # Now uninstall the package
+    print("\nUninstalling Python package...")
+    try:
+        subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "secure-cloud-syncer"],
+                      check=True)
+        print("✅ Package uninstalled successfully")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Error uninstalling package: {e}")
+        sys.exit(1)
+    
+    print("\n✅ Uninstallation completed!")
+    print("All configurations and the package have been removed.")
+
+def show_service_logs(follow=False, lines=50):
+    """Show the sync service logs."""
+    log_file = os.path.expanduser("~/.rclone/scs.log")
+    if not os.path.exists(log_file):
+        print("No log file found. The service might not have started yet.")
+        return
+    
+    try:
+        if follow:
+            # Use tail -f to follow the log file
+            subprocess.run(['tail', '-f', '-n', str(lines), log_file])
+        else:
+            # Just show the last n lines
+            subprocess.run(['tail', '-n', str(lines), log_file])
+    except Exception as e:
+        print(f"Error showing logs: {e}")
+
 def main():
     """Main entry point for the CLI."""
     parser = argparse.ArgumentParser(description='Secure Cloud Syncer CLI')
@@ -943,6 +980,9 @@ def main():
     
     # Cleanup command
     subparsers.add_parser('cleanup', help='Remove all configurations and created folders from setup')
+    
+    # Uninstall command
+    subparsers.add_parser('uninstall', help='Uninstall the package and remove all configurations')
     
     # Add command
     add_parser = subparsers.add_parser('add', help='Add a new sync configuration')
@@ -1007,6 +1047,8 @@ def main():
         setup_rclone()
     elif args.command == 'cleanup':
         cleanup_setup()
+    elif args.command == 'uninstall':
+        uninstall()
     elif args.command == 'add':
         add_sync(args.name, args.local_path, args.remote_dir, args.mode, args.exclude_resource_forks, args.debounce_time)
     elif args.command == 'list':
