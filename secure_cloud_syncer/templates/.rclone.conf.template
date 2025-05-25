@@ -3,9 +3,10 @@ type = drive
 client_id = YOUR_CLIENT_ID
 client_secret = YOUR_CLIENT_SECRET
 token = YOUR_TOKEN
-scope = drive.file
+# scope can be either 'drive' (full access) or 'drive.file' (restricted access)
+scope = drive
 
-[gdrive_encrypted]
+[gdrive-crypt]
 type = crypt
 remote = gdrive:secure_vault
 filename_encryption = off
