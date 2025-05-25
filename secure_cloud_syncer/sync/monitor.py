@@ -111,6 +111,7 @@ class ChangeHandler(FileSystemEventHandler):
         self.direction = direction
         self.last_sync = 0
         self.sync_pending = False
+        self.sync_in_progress = False
         self.exclude_patterns = build_exclude_patterns(exclude_resource_forks)
         self.logger = logging.getLogger("secure_cloud_syncer.monitor.handler")
         self.initial_sync_done = False
@@ -163,6 +164,13 @@ class ChangeHandler(FileSystemEventHandler):
         
         self.sync_pending = False
         self.last_sync = current_time
+        
+        # If a sync is already in progress, mark as pending and return
+        if self.sync_in_progress:
+            self.sync_pending = True
+            self.logger.info("Sync in progress, changes will be synced after current sync completes")
+            return
+        
         self.sync_directory(initial_sync=False)
     
     def sync_directory(self, initial_sync=False):
@@ -172,65 +180,81 @@ class ChangeHandler(FileSystemEventHandler):
         Args:
             initial_sync (bool): Whether this is the initial sync
         """
-        if self.direction == "bidirectional":
-            # Build the rclone bisync command
-            cmd = [
-                "rclone",
-                "bisync",
-                self.local_dir,
-                self.remote_dir,
-                "--verbose",
-                "--log-file", self.log_file,
-                "--transfers", "4",
-                "--checkers", "8",
-                "--contimeout", "60s",
-                "--timeout", "300s",
-                "--retries", "3",
-                "--low-level-retries", "10",
-                "--progress",
-                "--stats-one-line",
-                "--stats", "5s"
-            ]
-            
-            # Only add --resync for initial sync
-            if initial_sync:
-                cmd.insert(4, "--resync")
-                self.logger.info(f"Starting initial bidirectional sync between {self.local_dir} and {self.remote_dir}")
-            else:
-                self.logger.info(f"Starting bidirectional sync between {self.local_dir} and {self.remote_dir}")
-        else:  # upload
-            # Build the rclone sync command for one-way upload
-            cmd = [
-                "rclone",
-                "sync",
-                self.local_dir,
-                self.remote_dir,
-                "--verbose",
-                "--log-file", self.log_file,
-                "--transfers", "4",
-                "--checkers", "8",
-                "--contimeout", "60s",
-                "--timeout", "300s",
-                "--retries", "3",
-                "--low-level-retries", "10",
-                "--progress",
-                "--stats-one-line",
-                "--stats", "5s"
-            ]
-            self.logger.info(f"Starting one-way sync from {self.local_dir} to {self.remote_dir}")
+        if self.sync_in_progress:
+            self.logger.warning("Sync already in progress, skipping")
+            return
         
-        # Add exclude patterns
-        cmd.extend(self.exclude_patterns)
-        
+        self.sync_in_progress = True
         try:
-            # Run the sync command
-            self.logger.debug(f"Running command: {' '.join(cmd)}")
-            subprocess.run(cmd, check=True)
-            self.logger.info("Sync completed successfully")
-        except subprocess.CalledProcessError as e:
-            self.logger.error(f"Error during sync: {e}")
-        except Exception as e:
-            self.logger.error(f"Unexpected error during sync: {e}")
+            if self.direction == "bidirectional":
+                # Build the rclone bisync command
+                cmd = [
+                    "rclone",
+                    "bisync",
+                    self.local_dir,
+                    self.remote_dir,
+                    "--verbose",
+                    "--log-file", self.log_file,
+                    "--transfers", "4",
+                    "--checkers", "8",
+                    "--contimeout", "60s",
+                    "--timeout", "300s",
+                    "--retries", "3",
+                    "--low-level-retries", "10",
+                    "--progress",
+                    "--stats-one-line",
+                    "--stats", "5s"
+                ]
+                
+                # Only add --resync for initial sync
+                if initial_sync:
+                    cmd.insert(4, "--resync")
+                    self.logger.info(f"Starting initial bidirectional sync between {self.local_dir} and {self.remote_dir}")
+                else:
+                    self.logger.info(f"Starting bidirectional sync between {self.local_dir} and {self.remote_dir}")
+            else:  # upload
+                # Build the rclone sync command for one-way upload
+                cmd = [
+                    "rclone",
+                    "sync",
+                    self.local_dir,
+                    self.remote_dir,
+                    "--verbose",
+                    "--log-file", self.log_file,
+                    "--transfers", "4",
+                    "--checkers", "8",
+                    "--contimeout", "60s",
+                    "--timeout", "300s",
+                    "--retries", "3",
+                    "--low-level-retries", "10",
+                    "--progress",
+                    "--stats-one-line",
+                    "--stats", "5s"
+                ]
+                self.logger.info(f"Starting one-way sync from {self.local_dir} to {self.remote_dir}")
+            
+            # Add exclude patterns
+            cmd.extend(self.exclude_patterns)
+            
+            try:
+                # Run the sync command
+                self.logger.debug(f"Running command: {' '.join(cmd)}")
+                subprocess.run(cmd, check=True)
+                self.logger.info("Sync completed successfully")
+            except subprocess.CalledProcessError as e:
+                self.logger.error(f"Error during sync: {e}")
+            except Exception as e:
+                self.logger.error(f"Unexpected error during sync: {e}")
+            
+            # Check if we need to run another sync due to pending changes
+            if self.sync_pending:
+                self.logger.info("Changes occurred during sync, starting another sync")
+                self.sync_pending = False
+                self.sync_in_progress = False
+                self.sync_directory(initial_sync=False)
+            
+        finally:
+            self.sync_in_progress = False
 
 def start_monitoring(local_dir, remote_dir="gdrive-crypt:", exclude_resource_forks=False, debounce_time=5, log_file=None, direction="bidirectional"):
     """
