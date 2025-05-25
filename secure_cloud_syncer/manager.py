@@ -33,37 +33,42 @@ def setup_logging():
     os.makedirs(log_dir, exist_ok=True)
     
     # Configure root logger
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(os.path.join(log_dir, "scs_manager.log"))
-        ],
-        force=True  # Force reconfiguration
-    )
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
     
-    # Get the logger for this module
-    logger = logging.getLogger("secure_cloud_syncer.manager")
+    # Remove any existing handlers
+    root_logger.handlers = []
     
-    # Add a rotating file handler for better log management
+    # Create formatters
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    error_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s\n%(pathname)s:%(lineno)d\n%(message)s')
+    
+    # Add console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+    
+    # Add rotating file handler for all logs
     rotating_handler = RotatingFileHandler(
         os.path.join(log_dir, "scs_manager.log"),
         maxBytes=10*1024*1024,  # 10MB
         backupCount=5
     )
-    rotating_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-    logger.addHandler(rotating_handler)
+    rotating_handler.setFormatter(formatter)
+    root_logger.addHandler(rotating_handler)
     
-    # Set up error logging to a separate file
+    # Add error file handler
     error_handler = RotatingFileHandler(
         os.path.join(log_dir, "scs_manager.error.log"),
         maxBytes=10*1024*1024,  # 10MB
         backupCount=5
     )
     error_handler.setLevel(logging.ERROR)
-    error_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s\n%(pathname)s:%(lineno)d\n%(message)s'))
-    logger.addHandler(error_handler)
+    error_handler.setFormatter(error_formatter)
+    root_logger.addHandler(error_handler)
+    
+    # Get the logger for this module
+    logger = logging.getLogger("secure_cloud_syncer.manager")
     
     return logger
 
@@ -73,6 +78,7 @@ logger = setup_logging()
 CONFIG_FILE = os.path.expanduser("~/.rclone/scs_config.json")
 SOCKET_FILE = os.path.expanduser("~/.rclone/scs.sock")
 PID_FILE = os.path.expanduser("~/.rclone/scs_manager.pid")
+STOP_FLAG_FILE = os.path.expanduser("~/.rclone/scs_stop_flag")
 
 class ConfigWatcher(FileSystemEventHandler):
     """Watch for changes to the config file."""
@@ -127,7 +133,7 @@ class SyncTask:
             
             # Get configuration values with defaults
             local_dir = self.config['local_dir']
-            remote_dir = self.config.get('remote_dir', 'gdrive_encrypted:')
+            remote_dir = self.config.get('remote_dir', 'gdrive-crypt:')
             exclude_resource_forks = self.config.get('exclude_resource_forks', False)
             debounce_time = self.config.get('debounce_time', 5)
             direction = self.config.get('direction', 'bidirectional')
@@ -255,6 +261,13 @@ class SyncManager:
             logger.warning("Sync manager is not running")
             return
         
+        # Create stop flag to indicate intentional stop
+        try:
+            with open(STOP_FLAG_FILE, 'w') as f:
+                f.write(str(os.getpid()))
+        except Exception as e:
+            logger.error(f"Error creating stop flag: {e}")
+        
         # Stop watching the config file
         self.observer.stop()
         self.observer.join()
@@ -265,17 +278,34 @@ class SyncManager:
                 task.stop()
             self.tasks.clear()
         
-        self.running = False
+        # Stop watchdog threads
+        self.running = False  # This will stop the watchdog loops
+        
+        # Wait for watchdog threads to finish
+        if self.health_check_thread and self.health_check_thread.is_alive():
+            self.health_check_thread.join(timeout=5)
+        if self.watchdog_thread and self.watchdog_thread.is_alive():
+            self.watchdog_thread.join(timeout=5)
+        
         logger.info("Sync manager stopped")
     
     def _watchdog_loop(self):
         """Watchdog thread to ensure the service stays alive."""
-        while self.running:
+        while self.running:  # This will stop when self.running is set to False
             try:
                 # Check if the main process is still running
                 if not os.path.exists(PID_FILE):
-                    logger.error("PID file not found, service may have crashed")
-                    self._restart_service()
+                    # Check if this was an intentional stop
+                    if os.path.exists(STOP_FLAG_FILE):
+                        logger.info("Service was intentionally stopped, not restarting")
+                        try:
+                            os.remove(STOP_FLAG_FILE)
+                        except Exception as e:
+                            logger.error(f"Error removing stop flag: {e}")
+                        break
+                    else:
+                        logger.error("PID file not found, service may have crashed")
+                        self._restart_service()
                     break
                 
                 with open(PID_FILE, 'r') as f:
@@ -284,8 +314,17 @@ class SyncManager:
                 try:
                     os.kill(pid, 0)  # Check if process exists
                 except OSError:
-                    logger.error("Service process not found, restarting...")
-                    self._restart_service()
+                    # Check if this was an intentional stop
+                    if os.path.exists(STOP_FLAG_FILE):
+                        logger.info("Service was intentionally stopped, not restarting")
+                        try:
+                            os.remove(STOP_FLAG_FILE)
+                        except Exception as e:
+                            logger.error(f"Error removing stop flag: {e}")
+                        break
+                    else:
+                        logger.error("Service process not found, restarting...")
+                        self._restart_service()
                     break
                 
                 # Update last activity time
@@ -346,17 +385,23 @@ class SyncManager:
                 # Update existing tasks
                 for name, config in new_config["syncs"].items():
                     if name in self.tasks:
-                        # Check if config changed
+                        # Check if config changed or status changed to paused
                         if self.tasks[name].config != config:
                             logger.info(f"Updating task {name} with new config")
                             self.tasks[name].stop()
+                            if config.get('status') != 'paused':
+                                self.tasks[name] = SyncTask(config)
+                                self.tasks[name].start()
+                            else:
+                                logger.info(f"Task {name} is paused, not starting")
+                    else:
+                        # Start new task only if not paused
+                        if config.get('status') != 'paused':
+                            logger.info(f"Starting new task {name}")
                             self.tasks[name] = SyncTask(config)
                             self.tasks[name].start()
-                    else:
-                        # Start new task
-                        logger.info(f"Starting new task {name}")
-                        self.tasks[name] = SyncTask(config)
-                        self.tasks[name].start()
+                        else:
+                            logger.info(f"New task {name} is paused, not starting")
             
             logger.info("Configuration reloaded successfully")
         except Exception as e:
@@ -427,8 +472,44 @@ def check_pid_file():
         remove_pid()
         return False
 
+def check_and_cleanup_duplicate_managers():
+    """Check for and clean up any duplicate manager processes."""
+    try:
+        # Get all Python processes
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                # Check if this is a Python process running our manager
+                if proc.info['name'] and 'python' in proc.info['name'].lower():
+                    cmdline = proc.info['cmdline']
+                    if cmdline and 'secure_cloud_syncer.manager' in ' '.join(cmdline):
+                        # Skip our own process
+                        if proc.pid == os.getpid():
+                            continue
+                        
+                        logger.warning(f"Found duplicate manager process with PID {proc.pid}")
+                        # Try to terminate gracefully
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=5)
+                        except psutil.TimeoutExpired:
+                            logger.warning(f"Force killing duplicate process {proc.pid}")
+                            proc.kill()
+                        
+                        # Remove any stale PID files
+                        if os.path.exists(PID_FILE):
+                            os.remove(PID_FILE)
+                        if os.path.exists(STOP_FLAG_FILE):
+                            os.remove(STOP_FLAG_FILE)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+    except Exception as e:
+        logger.error(f"Error checking for duplicate managers: {e}")
+
 def main():
     """Main entry point for the sync manager daemon."""
+    # Check for and clean up any duplicate managers first
+    check_and_cleanup_duplicate_managers()
+    
     # Handle signals
     def signal_handler(signum, frame):
         logger.info(f"Received signal {signum}")

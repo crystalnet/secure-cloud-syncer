@@ -95,7 +95,7 @@ def build_exclude_patterns(exclude_resource_forks=False):
     
     return exclude_patterns
 
-def sync_bidirectional(local_dir, remote_dir="gdrive_encrypted:", exclude_resource_forks=False, log_file=None):
+def sync_bidirectional(local_dir, remote_dir="gdrive-crypt:", exclude_resource_forks=False, log_file=None):
     """
     Perform a bidirectional sync between a local directory and Google Drive using rclone bisync.
     

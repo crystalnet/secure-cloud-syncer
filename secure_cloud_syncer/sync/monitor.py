@@ -10,46 +10,9 @@ import time
 import logging
 import subprocess
 import re
-import multiprocessing
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-
-def setup_logging(log_file=None):
-    """
-    Set up logging configuration for the monitor process.
-    This should be called once at startup.
-    
-    Args:
-        log_file (str, optional): Path to the log file for rsync output.
-                                 If None, defaults to ~/.rclone/scs_monitor_rsync.log
-    
-    Returns:
-        tuple: (logger, log_file) where logger is the configured logger and log_file is the rsync log file path
-    """
-    # Create log directory if it doesn't exist
-    log_dir = os.path.expanduser("~/.rclone")
-    os.makedirs(log_dir, exist_ok=True)
-    
-    # Set default log file if not provided
-    if log_file is None:
-        log_file = os.path.join(log_dir, "scs_monitor_rsync.log")
-    
-    # Configure root logger
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(os.path.join(log_dir, "scs_monitor_python.log")),
-            logging.StreamHandler()
-        ],
-        force=True  # Force reconfiguration
-    )
-    
-    # Use the root logger
-    logger = logging.getLogger()
-    
-    return logger, log_file
 
 def check_rclone_version():
     """
@@ -58,6 +21,7 @@ def check_rclone_version():
     Returns:
         bool: True if version is sufficient, False otherwise
     """
+    logger = logging.getLogger("secure_cloud_syncer.monitor")
     try:
         result = subprocess.run(
             ["rclone", "version"],
@@ -148,6 +112,27 @@ class ChangeHandler(FileSystemEventHandler):
         self.last_sync = 0
         self.sync_pending = False
         self.exclude_patterns = build_exclude_patterns(exclude_resource_forks)
+        self.logger = logging.getLogger("secure_cloud_syncer.monitor.handler")
+        self.initial_sync_done = False
+        
+        # Check encryption settings
+        try:
+            result = subprocess.run(['rclone', 'config', 'show', remote_dir.split(':')[0]], 
+                                  capture_output=True, text=True, check=True)
+            if 'type = crypt' in result.stdout:
+                filename_enc = 'standard' if 'filename_encryption = standard' in result.stdout else 'off'
+                dir_enc = 'true' if 'directory_name_encryption = true' in result.stdout else 'false'
+                self.logger.info(f"Using encrypted remote with settings:")
+                self.logger.info(f"- Filename encryption: {filename_enc}")
+                self.logger.info(f"- Directory name encryption: {dir_enc}")
+        except Exception as e:
+            self.logger.warning(f"Could not verify encryption settings: {e}")
+        
+        # Perform initial sync
+        self.logger.info("Performing initial sync...")
+        self.sync_directory(initial_sync=True)
+        self.initial_sync_done = True
+        self.logger.info("Initial sync completed")
     
     def on_any_event(self, event):
         """
@@ -178,11 +163,14 @@ class ChangeHandler(FileSystemEventHandler):
         
         self.sync_pending = False
         self.last_sync = current_time
-        self.sync_directory()
+        self.sync_directory(initial_sync=False)
     
-    def sync_directory(self):
+    def sync_directory(self, initial_sync=False):
         """
         Perform a sync using rclone based on the configured direction.
+        
+        Args:
+            initial_sync (bool): Whether this is the initial sync
         """
         if self.direction == "bidirectional":
             # Build the rclone bisync command
@@ -191,8 +179,6 @@ class ChangeHandler(FileSystemEventHandler):
                 "bisync",
                 self.local_dir,
                 self.remote_dir,
-                "--resync",
-                "--delete",
                 "--verbose",
                 "--log-file", self.log_file,
                 "--transfers", "4",
@@ -205,7 +191,13 @@ class ChangeHandler(FileSystemEventHandler):
                 "--stats-one-line",
                 "--stats", "5s"
             ]
-            logger.info(f"Starting bidirectional sync between {self.local_dir} and {self.remote_dir}")
+            
+            # Only add --resync for initial sync
+            if initial_sync:
+                cmd.insert(4, "--resync")
+                self.logger.info(f"Starting initial bidirectional sync between {self.local_dir} and {self.remote_dir}")
+            else:
+                self.logger.info(f"Starting bidirectional sync between {self.local_dir} and {self.remote_dir}")
         else:  # upload
             # Build the rclone sync command for one-way upload
             cmd = [
@@ -225,22 +217,22 @@ class ChangeHandler(FileSystemEventHandler):
                 "--stats-one-line",
                 "--stats", "5s"
             ]
-            logger.info(f"Starting one-way sync from {self.local_dir} to {self.remote_dir}")
+            self.logger.info(f"Starting one-way sync from {self.local_dir} to {self.remote_dir}")
         
         # Add exclude patterns
         cmd.extend(self.exclude_patterns)
         
         try:
             # Run the sync command
-            logger.debug(f"Running command: {' '.join(cmd)}")
+            self.logger.debug(f"Running command: {' '.join(cmd)}")
             subprocess.run(cmd, check=True)
-            logger.info("Sync completed successfully")
+            self.logger.info("Sync completed successfully")
         except subprocess.CalledProcessError as e:
-            logger.error(f"Error during sync: {e}")
+            self.logger.error(f"Error during sync: {e}")
         except Exception as e:
-            logger.error(f"Unexpected error during sync: {e}")
+            self.logger.error(f"Unexpected error during sync: {e}")
 
-def start_monitoring(local_dir, remote_dir="gdrive_encrypted:", exclude_resource_forks=False, debounce_time=5, log_file=None, direction="bidirectional"):
+def start_monitoring(local_dir, remote_dir="gdrive-crypt:", exclude_resource_forks=False, debounce_time=5, log_file=None, direction="bidirectional"):
     """
     Start monitoring a directory for changes and trigger syncs.
     
@@ -255,10 +247,9 @@ def start_monitoring(local_dir, remote_dir="gdrive_encrypted:", exclude_resource
     Returns:
         Observer: The watchdog observer instance
     """
+    logger = logging.getLogger("secure_cloud_syncer.monitor")
+    
     try:
-        # Get the logger for this module
-        logger = logging.getLogger("secure_cloud_syncer.monitor")
-        
         # Set up log file path
         if log_file is None:
             log_dir = os.path.expanduser("~/.rclone")
@@ -334,7 +325,14 @@ def main():
         exclude_resource_forks=exclude_resource_forks,
         debounce_time=debounce_time
     )
-    sys.exit(0 if observer else 1)
+    
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        observer.stop()
+        observer.join()
+        sys.exit(0)
 
 if __name__ == "__main__":
     main() 

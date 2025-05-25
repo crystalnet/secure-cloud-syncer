@@ -129,8 +129,8 @@ def add_sync(name, local_dir, remote_dir, mode="bidirectional", exclude_resource
         sys.exit(1)
     
     # Verify remote path format
-    if not remote_dir.startswith(('gdrive:', 'onedrive:', 'dropbox:')):
-        logger.error("Remote directory must start with the remote name (e.g., 'gdrive:', 'onedrive:', 'dropbox:')")
+    if not remote_dir.startswith(('gdrive:', 'gdrive-crypt:', 'onedrive:', 'onedrive-crypt:', 'dropbox:', 'dropbox-crypt:')):
+        logger.error("Remote directory must start with the remote name (e.g., 'gdrive:', 'gdrive-crypt:', 'onedrive:', 'onedrive-crypt:', 'dropbox:', 'dropbox-crypt:')")
         sys.exit(1)
     
     # Split remote path into remote name and path
@@ -266,17 +266,47 @@ def list_syncs():
         print("No sync configurations found")
         return
     
-    print("\nSync Configurations:")
-    print("-" * 80)
+    # Separate active and paused syncs
+    active_syncs = {}
+    paused_syncs = {}
+    
     for name, sync_config in config["syncs"].items():
-        print(f"Name: {name}")
-        print(f"Local Directory: {sync_config['local_dir']}")
-        print(f"Remote Directory: {sync_config['remote_dir']}")
-        print(f"Mode: {sync_config['mode']}")
-        print(f"Exclude Resource Forks: {sync_config['exclude_resource_forks']}")
-        if sync_config['mode'] == 'monitor':
-            print(f"Debounce Time: {sync_config['debounce_time']} seconds")
+        if sync_config.get('status') == 'paused':
+            paused_syncs[name] = sync_config
+        else:
+            active_syncs[name] = sync_config
+    
+    # Print active syncs
+    if active_syncs:
+        print("\nActive Sync Configurations:")
         print("-" * 80)
+        for name, sync_config in active_syncs.items():
+            print(f"Name: {name}")
+            print(f"Local Directory: {sync_config['local_dir']}")
+            print(f"Remote Directory: {sync_config['remote_dir']}")
+            print(f"Mode: {sync_config['mode']}")
+            print(f"Exclude Resource Forks: {sync_config['exclude_resource_forks']}")
+            if sync_config['mode'] == 'monitor':
+                print(f"Debounce Time: {sync_config['debounce_time']} seconds")
+            print("-" * 80)
+    else:
+        print("\nNo active sync configurations")
+    
+    # Print paused syncs
+    if paused_syncs:
+        print("\nPaused Sync Configurations:")
+        print("-" * 80)
+        for name, sync_config in paused_syncs.items():
+            print(f"Name: {name}")
+            print(f"Local Directory: {sync_config['local_dir']}")
+            print(f"Remote Directory: {sync_config['remote_dir']}")
+            print(f"Mode: {sync_config['mode']}")
+            print(f"Exclude Resource Forks: {sync_config['exclude_resource_forks']}")
+            if sync_config['mode'] == 'monitor':
+                print(f"Debounce Time: {sync_config['debounce_time']} seconds")
+            print("-" * 80)
+    else:
+        print("\nNo paused sync configurations")
 
 def remove_sync(name):
     """Remove a sync configuration."""
@@ -321,8 +351,8 @@ def stop_sync(args) -> None:
     running_syncs = get_running_syncs()
     
     if args.name not in running_syncs:
-        print(f"Error: Sync configuration '{args.name}' is not running")
-        sys.exit(1)
+        logger.info(f"Sync configuration '{args.name}' is not running")
+        return
     
     pid = running_syncs[args.name]
     try:
@@ -331,16 +361,16 @@ def stop_sync(args) -> None:
         process.wait(timeout=5)  # Wait up to 5 seconds for the process to terminate
         del running_syncs[args.name]
         save_running_syncs(running_syncs)
-        print(f"Stopped sync configuration '{args.name}'")
+        logger.info(f"Stopped sync configuration '{args.name}'")
     except psutil.NoSuchProcess:
-        print(f"Sync configuration '{args.name}' was already stopped")
+        logger.info(f"Sync configuration '{args.name}' was already stopped")
         del running_syncs[args.name]
         save_running_syncs(running_syncs)
     except psutil.TimeoutExpired:
         process.kill()  # Force kill if it doesn't terminate
         del running_syncs[args.name]
         save_running_syncs(running_syncs)
-        print(f"Force stopped sync configuration '{args.name}'")
+        logger.info(f"Force stopped sync configuration '{args.name}'")
 
 def restart_sync(args) -> None:
     """Restart a sync configuration."""
@@ -463,43 +493,36 @@ def setup_rclone():
         
         # Ask about encryption preferences
         print("\n=== Encryption Settings ===")
-        print("Choose your encryption preferences:")
-        print("1. Standard (preserve file and folder names)")
-        print("2. Obfuscate (encrypt file and folder names)")
-        print("3. Custom encryption settings")
+        print("Choose how to handle file names:")
+        print("1. standard - Full encryption of file names (most private)")
+        print("2. obfuscate - Simple filename obfuscation (moderate privacy)")
+        print("3. off - No encryption of file names (most convenient)")
+        filename_enc = input("\nEnter your choice (1-3): ").strip()
+        filename_encryption = {
+            '1': 'standard',
+            '2': 'obfuscate',
+            '3': 'off'
+        }.get(filename_enc, 'standard')
         
-        enc_choice = input("\nEnter your choice (1-3): ").strip()
+        print("\nChoose how to handle folder names:")
+        print("1. standard - Full encryption of folder names (most private)")
+        print("2. obfuscate - Simple folder name obfuscation (moderate privacy)")
+        print("3. off - No encryption of folder names (most convenient)")
+        dir_enc = input("\nEnter your choice (1-3): ").strip()
+        directory_name_encryption = {
+            '1': 'standard',
+            '2': 'obfuscate',
+            '3': 'off'
+        }.get(dir_enc, 'standard')
         
-        # Set encryption parameters based on choice
-        if enc_choice == '1':  # Standard
-            filename_encryption = 'standard'
-            directory_name_encryption = 'false'
-        elif enc_choice == '2':  # Obfuscate
-            filename_encryption = 'standard'
-            directory_name_encryption = 'true'
-        elif enc_choice == '3':  # Custom
-            print("\nCustom encryption settings:")
-            print("Filename encryption options:")
-            print("1. standard - Encrypt the filenames")
-            print("2. obfuscate - Very simple filename obfuscation")
-            print("3. off - Don't encrypt the file names")
-            filename_enc = input("Choose filename encryption (1-3): ").strip()
-            filename_encryption = {
-                '1': 'standard',
-                '2': 'obfuscate',
-                '3': 'off'
-            }.get(filename_enc, 'standard')
-            
-            print("\nDirectory name encryption:")
-            print("1. true - Encrypt directory names")
-            print("2. false - Don't encrypt directory names")
-            dir_enc = input("Choose directory encryption (1-2): ").strip()
-            directory_name_encryption = 'true' if dir_enc == '1' else 'false'
-        else:
-            print("Invalid choice, using standard encryption.")
-            filename_encryption = 'standard'
-            directory_name_encryption = 'false'
-
+        # Save encryption settings to config for future reference
+        config = load_config()
+        config['encryption_settings'] = {
+            'filename_encryption': filename_encryption,
+            'directory_name_encryption': directory_name_encryption
+        }
+        save_config(config)
+        
         # Add scope selection for Google Drive
         if choice == '1':  # Google Drive
             print("\n=== Google Drive Access Level ===")
@@ -897,11 +920,12 @@ def pause_sync(name):
         logger.info(f"Sync configuration '{name}' is already paused")
         return
     
-    # Stop the sync if it's running
+    # Try to stop the sync if it's running
     try:
         stop_sync(argparse.Namespace(name=name))
     except SystemExit:
-        pass  # Ignore if the sync wasn't running
+        # If the sync wasn't running, that's fine - we can still mark it as paused
+        pass
     
     # Update status
     config["syncs"][name]["status"] = "paused"
