@@ -348,29 +348,26 @@ def start_sync(args) -> None:
 
 def stop_sync(args) -> None:
     """Stop a sync configuration."""
-    running_syncs = get_running_syncs()
+    config = load_config()
     
-    if args.name not in running_syncs:
-        logger.info(f"Sync configuration '{args.name}' is not running")
+    if args.name not in config["syncs"]:
+        logger.info(f"Sync configuration '{args.name}' does not exist")
         return
     
-    pid = running_syncs[args.name]
+    # Ensure service is running
+    if not is_service_running():
+        logger.info("Sync service is not running")
+        return
+    
     try:
-        process = psutil.Process(pid)
-        process.terminate()
-        process.wait(timeout=5)  # Wait up to 5 seconds for the process to terminate
-        del running_syncs[args.name]
-        save_running_syncs(running_syncs)
+        # Send SIGHUP to the service to reload configuration
+        with open(PID_FILE, 'r') as f:
+            pid = int(f.read().strip())
+        os.kill(pid, signal.SIGHUP)
         logger.info(f"Stopped sync configuration '{args.name}'")
-    except psutil.NoSuchProcess:
-        logger.info(f"Sync configuration '{args.name}' was already stopped")
-        del running_syncs[args.name]
-        save_running_syncs(running_syncs)
-    except psutil.TimeoutExpired:
-        process.kill()  # Force kill if it doesn't terminate
-        del running_syncs[args.name]
-        save_running_syncs(running_syncs)
-        logger.info(f"Force stopped sync configuration '{args.name}'")
+    except Exception as e:
+        logger.error(f"Error stopping sync: {e}")
+        sys.exit(1)
 
 def restart_sync(args) -> None:
     """Restart a sync configuration."""
@@ -505,15 +502,13 @@ def setup_rclone():
         }.get(filename_enc, 'standard')
         
         print("\nChoose how to handle folder names:")
-        print("1. standard - Full encryption of folder names (most private)")
-        print("2. obfuscate - Simple folder name obfuscation (moderate privacy)")
-        print("3. off - No encryption of folder names (most convenient)")
-        dir_enc = input("\nEnter your choice (1-3): ").strip()
+        print("1. Encrypt folder names - Folder names will be encrypted on the remote (most private)")
+        print("2. Don't encrypt folder names - Folder names will be stored as-is (more convenient)")
+        dir_enc = input("\nEnter your choice (1-2): ").strip()
         directory_name_encryption = {
-            '1': 'standard',
-            '2': 'obfuscate',
-            '3': 'off'
-        }.get(dir_enc, 'standard')
+            '1': 'true',
+            '2': 'false'
+        }.get(dir_enc, 'true')
         
         # Save encryption settings to config for future reference
         config = load_config()
@@ -522,25 +517,6 @@ def setup_rclone():
             'directory_name_encryption': directory_name_encryption
         }
         save_config(config)
-        
-        # Add scope selection for Google Drive
-        if choice == '1':  # Google Drive
-            print("\n=== Google Drive Access Level ===")
-            print("Choose the access level for Google Drive:")
-            print("1. Full Access (recommended)")
-            print("   - Can sync any folder in your Google Drive")
-            print("   - No need to share folders with rclone")
-            print("   - Less private but more convenient")
-            print("\n2. Restricted Access")
-            print("   - Can only sync folders created by rclone")
-            print("   - More private but less convenient")
-            print("   - Cannot sync existing folders unless created by rclone")
-            print("   - A root folder will be created for rclone to work with")
-            
-            scope_choice = input("\nEnter your choice (1-2): ").strip()
-            drive_scope = 'drive' if scope_choice == '1' else 'drive.file'
-        else:
-            drive_scope = 'drive'  # Default for other providers
         
         # Get encryption password with confirmation
         print("\n=== Encryption Settings ===")
@@ -563,54 +539,71 @@ def setup_rclone():
         print("This salt will be saved with your configuration.")
         print("Salt:", salt)
         
-        if choice == '1':  # Google Drive
-            print("\nSetting up Google Drive...")
-            print("🔄 Opening browser for Google Drive authentication...")
+        # Provider-specific setup
+        provider_info = {
+            '1': {
+                'name': 'Google Drive',
+                'remote': 'gdrive',
+                'crypt_remote': 'gdrive-crypt',
+                'setup_cmd': ['rclone', 'config', 'create', 'gdrive', 'drive'],
+                'scope_prompt': True
+            },
+            '2': {
+                'name': 'OneDrive',
+                'remote': 'onedrive',
+                'crypt_remote': 'onedrive-crypt',
+                'setup_cmd': ['rclone', 'config', 'create', 'onedrive', 'onedrive', 'region', 'global'],
+                'scope_prompt': False
+            },
+            '3': {
+                'name': 'Dropbox',
+                'remote': 'dropbox',
+                'crypt_remote': 'dropbox-crypt',
+                'setup_cmd': ['rclone', 'config', 'create', 'dropbox', 'dropbox'],
+                'scope_prompt': False
+            }
+        }
+        
+        if choice in provider_info:
+            provider = provider_info[choice]
+            print(f"\nSetting up {provider['name']}...")
+            
+            # Add scope selection for Google Drive
+            if provider['scope_prompt']:
+                print("\n=== Google Drive Access Level ===")
+                print("Choose the access level for Google Drive:")
+                print("1. Full Access (recommended)")
+                print("   - Can sync any folder in your Google Drive")
+                print("   - No need to share folders with rclone")
+                print("   - Less private but more convenient")
+                print("\n2. Restricted Access")
+                print("   - Can only sync folders created by rclone")
+                print("   - More private but less convenient")
+                print("   - Cannot sync existing folders unless created by rclone")
+                print("   - A root folder will be created for rclone to work with")
+                
+                scope_choice = input("\nEnter your choice (1-2): ").strip()
+                drive_scope = 'drive' if scope_choice == '1' else 'drive.file'
+                provider['setup_cmd'].extend(['scope', drive_scope])
+            
+            # Add common parameters
+            provider['setup_cmd'].extend(['advanced_config', 'n', 'auto_config', 'y'])
+            
+            # Run the setup command
+            print(f"\n🔄 Opening browser for {provider['name']} authentication...")
             print("Please complete the authentication in your browser.")
             print("Waiting for authentication to complete...")
             
-            # Ask about team drive
-            print("\nDo you want to use a Google Workspace (formerly G Suite) team drive?")
-            print("1. No, use my personal Google Drive")
-            print("2. Yes, use a team drive")
-            team_drive_choice = input("\nEnter your choice (1-2): ").strip()
-            
-            # Create gdrive remote
-            if team_drive_choice == '2':
-                # For team drive, we need the team drive ID
-                print("\nPlease enter your team drive ID.")
-                print("You can find this in the URL when viewing your team drive:")
-                print("https://drive.google.com/drive/folders/TEAM_DRIVE_ID")
-                team_drive_id = input("\nEnter team drive ID: ").strip()
-                
-                print("\n🔄 Opening browser for Google Drive authentication...")
-                print("Please complete the authentication in your browser.")
-                print("Waiting for authentication to complete...")
-                result = subprocess.run(['rclone', 'config', 'create', 'gdrive', 'drive', 
-                              'scope', drive_scope, 'root_folder_id', team_drive_id, 
-                              'service_account_file', '', 'advanced_config', 'n',
-                              'auto_config', 'y'], 
-                              capture_output=True, text=True)
-            else:
-                # For personal drive
-                print("\n🔄 Opening browser for Google Drive authentication...")
-                print("Please complete the authentication in your browser.")
-                print("Waiting for authentication to complete...")
-                result = subprocess.run(['rclone', 'config', 'create', 'gdrive', 'drive', 
-                              'scope', drive_scope, 'root_folder_id', 'root', 
-                              'service_account_file', '', 'advanced_config', 'n',
-                              'auto_config', 'y'], 
-                              capture_output=True, text=True)
-            
+            result = subprocess.run(provider['setup_cmd'], capture_output=True, text=True)
             if result.returncode != 0:
-                print(f"\n❌ Error creating Google Drive remote:")
+                print(f"\n❌ Error creating {provider['name']} remote:")
                 print(result.stderr)
                 sys.exit(1)
             
-            print("✅ Google Drive authentication completed!")
+            print(f"✅ {provider['name']} authentication completed!")
             
-            # If using drive.file scope, create a root folder for rclone
-            if drive_scope == 'drive.file':
+            # Handle restricted access setup
+            if provider['scope_prompt'] and drive_scope == 'drive.file':
                 print("\n=== Rclone Root Folder Setup ===")
                 print("With restricted access, rclone needs a dedicated folder to work with.")
                 print("1. Use default folder (recommended)")
@@ -632,14 +625,13 @@ def setup_rclone():
                         print("Using default folder name: secureCloudSyncer")
                 
                 print(f"\nCreating root folder '{rclone_root}'...")
-                result = subprocess.run(['rclone', 'mkdir', f'gdrive:{rclone_root}'], 
+                result = subprocess.run(['rclone', 'mkdir', f"{provider['remote']}:{rclone_root}"], 
                                       capture_output=True, text=True)
                 if result.returncode != 0:
                     print(f"\n❌ Error creating root folder:")
                     print(result.stderr)
                     sys.exit(1)
-                print(f"✅ Created root folder '{rclone_root}' in your Google Drive")
-                print(f"Note: When adding syncs, use paths under 'gdrive:{rclone_root}/'")
+                print(f"✅ Created root folder '{rclone_root}' in your {provider['name']}")
                 
                 # Save the rclone root folder to config for future use
                 config = load_config()
@@ -647,8 +639,8 @@ def setup_rclone():
                 save_config(config)
             
             # Create encrypted remote
-            result = subprocess.run(['rclone', 'config', 'create', 'gdrive-crypt', 'crypt',
-                          'remote', 'gdrive:', 'filename_encryption', filename_encryption,
+            result = subprocess.run(['rclone', 'config', 'create', provider['crypt_remote'], 'crypt',
+                          'remote', f"{provider['remote']}:", 'filename_encryption', filename_encryption,
                           'directory_name_encryption', directory_name_encryption,
                           'password', password, 'salt', salt,
                           'password2', password,  # Required for crypt remote
@@ -659,61 +651,31 @@ def setup_rclone():
                 print(result.stderr)
                 sys.exit(1)
             
-        elif choice == '2':  # OneDrive
-            print("\nSetting up OneDrive...")
-            print("🔄 Opening browser for OneDrive authentication...")
-            print("Please complete the authentication in your browser.")
-            print("Waiting for authentication to complete...")
-            # Create onedrive remote
-            result = subprocess.run(['rclone', 'config', 'create', 'onedrive', 'onedrive',
-                          'region', 'global', 'advanced_config', 'n', 
-                          'auto_config', 'y'], 
-                          capture_output=True, text=True)
-            if result.returncode != 0:
-                print(f"\n❌ Error creating OneDrive remote:")
-                print(result.stderr)
-                sys.exit(1)
-            print("✅ OneDrive authentication completed!")
-            
-            # Create encrypted remote
-            result = subprocess.run(['rclone', 'config', 'create', 'onedrive-crypt', 'crypt',
-                          'remote', 'onedrive:', 'filename_encryption', filename_encryption,
-                          'directory_name_encryption', directory_name_encryption,
-                          'password', password, 'salt', salt,
-                          'password2', password,  # Required for crypt remote
-                          'show_mapping', 'false'], 
-                          capture_output=True, text=True)
-            if result.returncode != 0:
-                print(f"\n❌ Error creating encrypted remote:")
-                print(result.stderr)
-                sys.exit(1)
-            
-        elif choice == '3':  # Dropbox
-            print("\nSetting up Dropbox...")
-            print("🔄 Opening browser for Dropbox authentication...")
-            print("Please complete the authentication in your browser.")
-            print("Waiting for authentication to complete...")
-            # Create dropbox remote
-            result = subprocess.run(['rclone', 'config', 'create', 'dropbox', 'dropbox',
-                          'advanced_config', 'n', 'auto_config', 'y'], 
-                          capture_output=True, text=True)
-            if result.returncode != 0:
-                print(f"\n❌ Error creating Dropbox remote:")
-                print(result.stderr)
-                sys.exit(1)
-            print("✅ Dropbox authentication completed!")
-            
-            # Create encrypted remote
-            result = subprocess.run(['rclone', 'config', 'create', 'dropbox-crypt', 'crypt',
-                          'remote', 'dropbox:', 'filename_encryption', filename_encryption,
-                          'directory_name_encryption', directory_name_encryption,
-                          'password', password, 'salt', salt,
-                          'password2', password,  # Required for crypt remote
-                          'show_mapping', 'false'], 
-                          capture_output=True, text=True)
-            if result.returncode != 0:
-                print(f"\n❌ Error creating encrypted remote:")
-                print(result.stderr)
+            # Verify configuration
+            try:
+                if provider['scope_prompt'] and drive_scope == 'drive.file':
+                    # For restricted access, verify the root folder
+                    test_dir = f"{rclone_root}/scs-test-{int(time.time())}"
+                    result = subprocess.run(['rclone', 'mkdir', f"{provider['remote']}:{test_dir}"], 
+                                          capture_output=True, text=True)
+                    if result.returncode == 0:
+                        # Clean up test directory
+                        subprocess.run(['rclone', 'rmdir', f"{provider['remote']}:{test_dir}"], 
+                                     capture_output=True, text=True)
+                        print(f"\n✅ {provider['name']} configuration successful!")
+                else:
+                    # For full access, verify basic connectivity
+                    result = subprocess.run(['rclone', 'ls', f"{provider['remote']}:"], 
+                                          capture_output=True, text=True)
+                    if result.returncode == 0:
+                        print(f"\n✅ {provider['name']} configuration successful!")
+                    else:
+                        print(f"\n❌ {provider['name']} configuration failed:")
+                        print(result.stderr)
+                        sys.exit(1)
+            except subprocess.CalledProcessError as e:
+                print(f"\n❌ {provider['name']} configuration failed:")
+                print(e.stderr)
                 sys.exit(1)
             
         elif choice == '4':  # Custom Setup
@@ -722,100 +684,24 @@ def setup_rclone():
             print("For encryption, you'll need to set up a second remote with the '-crypt' suffix")
             print("and choose 'crypt' as the storage type.")
             subprocess.run(['rclone', 'config'], check=True)
-            
+            print("\n✅ Custom configuration completed!")
         else:
             print("Invalid choice. Please try again.")
             return setup_rclone()
         
-        # Verify configuration
-        remote_name = {
-            '1': 'gdrive',
-            '2': 'onedrive',
-            '3': 'dropbox'
-        }.get(choice)
-        
-        if remote_name:
-            try:
-                # For Google Drive, we need to use a different verification method
-                if remote_name == 'gdrive':
-                    # Try to create a test directory
-                    test_dir = f"scs-test-{int(time.time())}"
-                    if drive_scope == 'drive.file':
-                        config = load_config()
-                        rclone_root = config.get('rclone_root', 'secureCloudSyncer')
-                        test_dir = f"{rclone_root}/{test_dir}"  # Use the configured root folder
-                    
-                    try:
-                        result = subprocess.run(['rclone', 'mkdir', f'{remote_name}:{test_dir}'], 
-                                              capture_output=True, text=True)
-                        if result.returncode == 0:
-                            # Clean up the test directory
-                            try:
-                                subprocess.run(['rclone', 'rmdir', f'{remote_name}:{test_dir}'], 
-                                             capture_output=True, text=True)
-                                logger.debug(f"Cleaned up test directory from remote: {test_dir}")
-                            except Exception as e:
-                                logger.warning(f"Failed to clean up test directory from remote: {e}")
-                            
-                            print(f"\n✅ {remote_name.capitalize()} configuration successful!")
-                            
-                            # Start the sync service
-                            if not is_service_running():
-                                print("\nStarting sync service...")
-                                start_service()
-                                print("✅ Sync service started")
-                            else:
-                                print("\n✅ Sync service is already running")
-                            
-                            print("\nNext steps:")
-                            print("1. Add a folder to sync: scs add <name> <local-path> --remote-dir <remote-path>")
-                            if drive_scope == 'drive.file':
-                                print(f"   Note: Use paths under 'gdrive:{rclone_root}/' for remote directories")
-                        else:
-                            print(f"\n❌ {remote_name.capitalize()} configuration failed:")
-                            print(result.stderr)
-                            sys.exit(1)
-                    except Exception as e:
-                        print(f"\n❌ Error during configuration verification: {e}")
-                        sys.exit(1)
-                else:
-                    # For other providers, use the original ls method
-                    result = subprocess.run(['rclone', 'ls', f'{remote_name}:'], 
-                                          capture_output=True, text=True)
-                    if result.returncode == 0:
-                        print(f"\n✅ {remote_name.capitalize()} configuration successful!")
-                        
-                        # Start the sync service
-                        if not is_service_running():
-                            print("\nStarting sync service...")
-                            start_service()
-                            print("✅ Sync service started")
-                        else:
-                            print("\n✅ Sync service is already running")
-                        
-                        print("\nNext steps:")
-                        print("1. Add a folder to sync: scs add <name> <local-path> --remote-dir <remote-path>")
-                    else:
-                        print(f"\n❌ {remote_name.capitalize()} configuration failed:")
-                        print(result.stderr)
-                        sys.exit(1)
-            except subprocess.CalledProcessError as e:
-                print(f"\n❌ {remote_name.capitalize()} configuration failed:")
-                print(e.stderr)
-                sys.exit(1)
+        # Start the sync service
+        if not is_service_running():
+            print("\nStarting sync service...")
+            start_service()
+            print("✅ Sync service started")
         else:
-            print("\n✅ Custom configuration completed!")
-            
-            # Start the sync service
-            if not is_service_running():
-                print("\nStarting sync service...")
-                start_service()
-                print("✅ Sync service started")
-            else:
-                print("\n✅ Sync service is already running")
-            
-            print("\nNext steps:")
-            print("1. Add a folder to sync: scs add <name> <local-path> --remote-dir <remote-path>")
+            print("\n✅ Sync service is already running")
+        
+        # Show next steps at the very end
+        print("\nNext steps:")
+        print("   - Add a folder to sync: scs add <name> <local-path> --remote-dir <remote-path>")
+        if provider['scope_prompt'] and drive_scope == 'drive.file':
+            print(f"   Note: Use paths under '{provider['crypt_remote']}:{rclone_root}/' for remote directories")
         
     except FileNotFoundError:
         print("\n❌ rclone binary not found!")
@@ -886,24 +772,41 @@ def cleanup_setup():
     except Exception as e:
         print(f"ℹ️ Error removing Google Drive folder: {e}")
     
-    # Remove config files
-    print("\nRemoving configuration files...")
-    config_files = [
+    # Remove all Secure Cloud Syncer related files
+    print("\nRemoving configuration files and logs...")
+    rclone_dir = os.path.expanduser("~/.rclone")
+    files_to_remove = [
         CONFIG_FILE,
         PID_FILE,
-        os.path.expanduser("~/.rclone/scs.log"),
-        os.path.expanduser("~/.rclone/scs_manager.log")
+        os.path.join(rclone_dir, "scs.log"),
+        os.path.join(rclone_dir, "scs_stop_flag"),
+        os.path.join(rclone_dir, "scs_manager.log"),
+        os.path.join(rclone_dir, "scs_manager.error.log")
     ]
     
-    for file in config_files:
+    # Remove specific files
+    for file in files_to_remove:
         try:
             if os.path.exists(file):
                 os.remove(file)
-                print(f"✅ Removed {file}")
+                print(f"✅ Removed {os.path.basename(file)}")
             else:
-                print(f"ℹ️ {file} not found")
+                print(f"ℹ️ {os.path.basename(file)} not found")
         except Exception as e:
-            print(f"ℹ️ Error removing {file}: {e}")
+            print(f"ℹ️ Error removing {os.path.basename(file)}: {e}")
+    
+    # Remove all scs_ log files from .rclone folder
+    try:
+        for file in os.listdir(rclone_dir):
+            if file.startswith("scs_") and file.endswith(".log"):
+                file_path = os.path.join(rclone_dir, file)
+                try:
+                    os.remove(file_path)
+                    print(f"✅ Removed log file: {file}")
+                except Exception as e:
+                    print(f"ℹ️ Error removing log file {file}: {e}")
+    except Exception as e:
+        print(f"ℹ️ Error accessing .rclone directory: {e}")
     
     print("\n✅ Cleanup completed!")
     print("You can now run 'scs setup' again to reconfigure the tool.")
@@ -920,17 +823,22 @@ def pause_sync(name):
         logger.info(f"Sync configuration '{name}' is already paused")
         return
     
-    # Try to stop the sync if it's running
-    try:
-        stop_sync(argparse.Namespace(name=name))
-    except SystemExit:
-        # If the sync wasn't running, that's fine - we can still mark it as paused
-        pass
-    
-    # Update status
+    # Update status first
     config["syncs"][name]["status"] = "paused"
     save_config(config)
-    logger.info(f"Paused sync configuration '{name}'")
+    
+    # Then tell the service to reload config
+    if is_service_running():
+        try:
+            with open(PID_FILE, 'r') as f:
+                pid = int(f.read().strip())
+            os.kill(pid, signal.SIGHUP)
+            logger.info(f"Paused sync configuration '{name}'")
+        except Exception as e:
+            logger.error(f"Error pausing sync: {e}")
+            sys.exit(1)
+    else:
+        logger.info(f"Sync service is not running, but marked '{name}' as paused")
 
 def resume_sync(name):
     """Resume a paused sync configuration."""
@@ -944,18 +852,25 @@ def resume_sync(name):
         logger.info(f"Sync configuration '{name}' is already active")
         return
     
-    # Update status
+    # Update status first
     config["syncs"][name]["status"] = "active"
     save_config(config)
     
-    # Ensure service is running
+    # Then tell the service to reload config
     if not is_service_running():
         logger.info("Starting sync service...")
         start_service()
+        # Give the service a moment to start
+        time.sleep(2)
     
-    # Start the sync
-    logger.info(f"Resuming sync '{name}'...")
-    start_sync(argparse.Namespace(name=name))
+    try:
+        with open(PID_FILE, 'r') as f:
+            pid = int(f.read().strip())
+        os.kill(pid, signal.SIGHUP)
+        logger.info(f"Resumed sync configuration '{name}'")
+    except Exception as e:
+        logger.error(f"Error resuming sync: {e}")
+        sys.exit(1)
 
 def uninstall():
     """Uninstall the package and remove all configurations."""
