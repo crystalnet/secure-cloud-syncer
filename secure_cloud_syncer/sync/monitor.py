@@ -195,15 +195,19 @@ class ChangeHandler(FileSystemEventHandler):
                     self.remote_dir,
                     "--verbose",
                     "--log-file", self.log_file,
-                    "--transfers", "4",
+                    "--transfers", "6",
                     "--checkers", "8",
                     "--contimeout", "60s",
                     "--timeout", "300s",
                     "--retries", "3",
                     "--low-level-retries", "10",
-                    "--progress",
                     "--stats-one-line",
-                    "--stats", "5s"
+                    "--stats", "10s",
+                    "--buffer-size", "64M",
+                    "--multi-thread-cutoff", "100M",
+                    "--multi-thread-streams", "4",
+                    "--fast-list",
+                    "--no-update-modtime"
                 ]
                 
                 # Only add --resync for initial sync
@@ -221,15 +225,21 @@ class ChangeHandler(FileSystemEventHandler):
                     self.remote_dir,
                     "--verbose",
                     "--log-file", self.log_file,
-                    "--transfers", "4",
-                    "--checkers", "8",
+                    "--transfers", "8",
+                    "--checkers", "16",
                     "--contimeout", "60s",
                     "--timeout", "300s",
                     "--retries", "3",
                     "--low-level-retries", "10",
                     "--progress",
                     "--stats-one-line",
-                    "--stats", "5s"
+                    "--stats", "5s",
+                    "--buffer-size", "256M",
+                    "--multi-thread-cutoff", "100M",
+                    "--multi-thread-streams", "4",
+                    "--fast-list",
+                    "--checksum",
+                    "--no-update-modtime"
                 ]
                 self.logger.info(f"Starting one-way sync from {self.local_dir} to {self.remote_dir}")
             
