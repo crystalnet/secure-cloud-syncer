@@ -312,7 +312,12 @@ class SyncManager:
                     pid = int(f.read().strip())
                 
                 try:
-                    os.kill(pid, 0)  # Check if process exists
+                    if os.name == 'nt':  # Windows
+                        import psutil
+                        if not psutil.pid_exists(pid):
+                            raise OSError("Process not found")
+                    else:  # Unix
+                        os.kill(pid, 0)  # Check if process exists
                 except OSError:
                     # Check if this was an intentional stop
                     if os.path.exists(STOP_FLAG_FILE):
@@ -342,10 +347,20 @@ class SyncManager:
             if os.path.exists(PID_FILE):
                 os.remove(PID_FILE)
             
-            # Start new service process with stdout/stderr preserved
-            subprocess.Popen([sys.executable, "-m", "secure_cloud_syncer.manager"],
-                           stdout=sys.stdout,
-                           stderr=sys.stderr)
+            # Start new service process
+            if os.name == 'nt':  # Windows
+                # Use pythonw.exe to run without console window
+                python_exe = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+                if not os.path.exists(python_exe):
+                    python_exe = sys.executable
+                subprocess.Popen([python_exe, "-m", "secure_cloud_syncer.manager"],
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL,
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+            else:  # Unix
+                subprocess.Popen([sys.executable, "-m", "secure_cloud_syncer.manager"],
+                               stdout=sys.stdout,
+                               stderr=sys.stderr)
             logger.info("Service restarted by watchdog")
         except Exception as e:
             logger.error(f"Failed to restart service: {e}")
@@ -460,7 +475,7 @@ def check_pid_file():
         # Check if process exists and is our service
         try:
             process = psutil.Process(pid)
-            if process.name().startswith('python') and 'secure_cloud_syncer.manager' in ' '.join(process.cmdline()):
+            if process.name().startswith(('python', 'pythonw')) and 'secure_cloud_syncer.manager' in ' '.join(process.cmdline()):
                 return True
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
@@ -479,7 +494,7 @@ def check_and_cleanup_duplicate_managers():
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
                 # Check if this is a Python process running our manager
-                if proc.info['name'] and 'python' in proc.info['name'].lower():
+                if proc.info['name'] and proc.info['name'].lower().startswith(('python', 'pythonw')):
                     cmdline = proc.info['cmdline']
                     if cmdline and 'secure_cloud_syncer.manager' in ' '.join(cmdline):
                         # Skip our own process
@@ -523,9 +538,29 @@ def main():
             sys.exit(0)
     
     # Register signal handlers
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGHUP, signal_handler)
+    if os.name != 'nt':  # Unix-like systems
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGHUP, signal_handler)
+    else:  # Windows
+        # Windows doesn't support SIGHUP, so we'll use a different approach
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+        # For Windows, we'll use a file-based approach for config reload
+        def check_config_reload():
+            while True:
+                if os.path.exists(os.path.expanduser("~/.rclone/scs_reload_flag")):
+                    try:
+                        os.remove(os.path.expanduser("~/.rclone/scs_reload_flag"))
+                        logger.info("Reloading configuration...")
+                        manager.reload_config()
+                    except Exception as e:
+                        logger.error(f"Error handling config reload: {e}")
+                time.sleep(1)
+        
+        # Start config reload checker thread
+        reload_thread = threading.Thread(target=check_config_reload, daemon=True)
+        reload_thread.start()
     
     # Save PID
     save_pid()

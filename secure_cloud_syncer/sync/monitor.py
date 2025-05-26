@@ -76,7 +76,16 @@ def build_exclude_patterns(exclude_resource_forks=False):
         "--exclude", ".LSOverride",
         "--exclude", "**/.LSOverride/**",
         "--exclude", "Icon?",
-        "--exclude", "**/Icon?"
+        "--exclude", "**/Icon?",
+        # Windows specific patterns
+        "--exclude", "Thumbs.db",
+        "--exclude", "**/Thumbs.db",
+        "--exclude", "desktop.ini",
+        "--exclude", "**/desktop.ini",
+        "--exclude", "$RECYCLE.BIN/**",
+        "--exclude", "**/$RECYCLE.BIN/**",
+        "--exclude", "*.lnk",
+        "--exclude", "**/*.lnk"
     ]
     
     if exclude_resource_forks:
@@ -103,7 +112,7 @@ class ChangeHandler(FileSystemEventHandler):
             log_file (str): Path to the log file
             direction (str): Sync direction - "bidirectional" or "upload"
         """
-        self.local_dir = local_dir
+        self.local_dir = os.path.normpath(local_dir)
         self.remote_dir = remote_dir
         self.exclude_resource_forks = exclude_resource_forks
         self.debounce_time = debounce_time
@@ -156,6 +165,13 @@ class ChangeHandler(FileSystemEventHandler):
                 return
         except ValueError:
             return
+        
+        # Skip Windows-specific temporary files
+        if os.name == 'nt':
+            if event.src_path.endswith('.tmp') or event.src_path.endswith('.temp'):
+                return
+            if '~$' in event.src_path:  # Office temporary files
+                return
         
         current_time = time.time()
         if current_time - self.last_sync < self.debounce_time:

@@ -119,6 +119,9 @@ def is_process_running(pid: int) -> bool:
 
 def add_sync(name, local_dir, remote_dir, mode="bidirectional", exclude_resource_forks=True, debounce_time=5):
     """Add a new sync configuration."""
+    # Convert paths to platform-specific format
+    local_dir = os.path.normpath(local_dir)
+    
     # Verify local directory
     if not os.path.exists(local_dir):
         logger.error(f"Local directory does not exist: {local_dir}")
@@ -138,6 +141,9 @@ def add_sync(name, local_dir, remote_dir, mode="bidirectional", exclude_resource
     if not remote_path:
         logger.error("Remote path cannot be empty")
         sys.exit(1)
+    
+    # Normalize remote path to use forward slashes
+    remote_path = remote_path.replace('\\', '/')
     
     # For drive.file scope, ensure path is under rclone root
     if remote_name == 'gdrive':
@@ -391,9 +397,13 @@ def is_service_running():
         
         # Check if process exists
         try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
+            if os.name == 'nt':  # Windows
+                import psutil
+                return psutil.pid_exists(pid)
+            else:  # Unix
+                os.kill(pid, 0)
+                return True
+        except (OSError, psutil.NoSuchProcess):
             return False
     except Exception:
         return False
@@ -406,9 +416,19 @@ def start_service():
     
     try:
         # Start the service in the background
-        subprocess.Popen([sys.executable, "-m", "secure_cloud_syncer.manager"],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL)
+        if os.name == 'nt':  # Windows
+            # Use pythonw.exe to run without console window
+            python_exe = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+            if not os.path.exists(python_exe):
+                python_exe = sys.executable
+            subprocess.Popen([python_exe, "-m", "secure_cloud_syncer.manager"],
+                           stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+        else:  # Unix
+            subprocess.Popen([sys.executable, "-m", "secure_cloud_syncer.manager"],
+                           stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
         logger.info("Sync service started")
     except Exception as e:
         logger.error(f"Error starting sync service: {e}")
@@ -424,18 +444,28 @@ def stop_service():
         with open(PID_FILE, 'r') as f:
             pid = int(f.read().strip())
         
-        # Send SIGTERM to the service
-        os.kill(pid, 15)  # SIGTERM
-        
-        # Wait for the service to stop
-        for _ in range(10):  # Wait up to 10 seconds
-            if not is_service_running():
-                break
-            import time
-            time.sleep(1)
-        else:
-            # If service didn't stop, force kill
-            os.kill(pid, 9)  # SIGKILL
+        if os.name == 'nt':  # Windows
+            import psutil
+            try:
+                process = psutil.Process(pid)
+                process.terminate()
+                process.wait(timeout=10)  # Wait up to 10 seconds
+            except psutil.NoSuchProcess:
+                pass
+            except psutil.TimeoutExpired:
+                process.kill()  # Force kill if termination times out
+        else:  # Unix
+            # Send SIGTERM to the service
+            os.kill(pid, 15)  # SIGTERM
+            
+            # Wait for the service to stop
+            for _ in range(10):  # Wait up to 10 seconds
+                if not is_service_running():
+                    break
+                time.sleep(1)
+            else:
+                # If service didn't stop, force kill
+                os.kill(pid, 9)  # SIGKILL
         
         logger.info("Sync service stopped")
     except Exception as e:
@@ -457,8 +487,14 @@ def reload_service():
         with open(PID_FILE, 'r') as f:
             pid = int(f.read().strip())
         
-        # Send SIGHUP to the service
-        os.kill(pid, 1)  # SIGHUP
+        if os.name == 'nt':  # Windows
+            # On Windows, we need to stop and restart the service
+            stop_service()
+            start_service()
+        else:  # Unix
+            # Send SIGHUP to the service
+            os.kill(pid, 1)  # SIGHUP
+        
         logger.info("Sync service configuration reloaded")
     except Exception as e:
         logger.error(f"Error reloading sync service: {e}")
